@@ -452,7 +452,8 @@ export const CaseStage3D: React.FC<CaseStage3DProps> = ({ caseBox, isOpeningLid,
       if (wantOpen) {
         if (openSec > 0.16) {
           const hp = Math.min(1, (openSec - 0.16) / 0.88);
-          lidAngle = (-Math.PI / 2) * easeInOutCubic(hp);
+          const settle = easeInOutCubic(hp) + Math.sin(Math.PI * hp) * 0.012;
+          lidAngle = (-Math.PI / 2) * settle;
         }
       } else {
         lidAngle = THREE.MathUtils.damp(rig.lidPivot.rotation.x, 0, 12, dt);

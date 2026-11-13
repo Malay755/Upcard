@@ -143,12 +143,12 @@ export const CasesView: React.FC<CasesViewProps> = ({
   const [isOpening, setIsOpening] = useState(false);
   const [stageEntryKey, setStageEntryKey] = useState(0);
   const [tapeItems, setTapeItems] = useState<ItemCard[]>([]);
-  const [tapeOffset, setTapeOffset] = useState<number>(0);
   const [wonDrop, setWonDrop] = useState<{ item: ItemCard; instance: InventoryItem } | null>(null);
   const [legendaryModalOpen, setLegendaryModalOpen] = useState(false);
   const [error, setError] = useState('');
 
   const tapeContainerRef = useRef<HTMLDivElement | null>(null);
+  const tapeReelRef = useRef<HTMLDivElement | null>(null);
   const animRef = useRef<number | null>(null);
   const lidTimeoutRef = useRef<number | null>(null);
 
@@ -184,7 +184,7 @@ export const CasesView: React.FC<CasesViewProps> = ({
       preview.push(pool[i % pool.length]);
     }
     setTapeItems(preview);
-    setTapeOffset(0);
+    tapeReelRef.current?.style.setProperty('transform', 'translate3d(0,0,0)');
     setIsOpeningLid(false);
     setIsOpening(false);
     setWonDrop(null);
@@ -225,17 +225,18 @@ export const CasesView: React.FC<CasesViewProps> = ({
     }
 
     const from3DShowcase = !wonDrop;
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     setWonDrop(null);
     setLegendaryModalOpen(false);
 
-    if (from3DShowcase && !fastOpen) {
+    if (from3DShowcase && !fastOpen && !reduceMotion) {
       setIsOpeningLid(true);
     }
 
     try {
       const apiPromise = onOpenCase(activeCase.id);
 
-      if (from3DShowcase && !fastOpen) {
+      if (from3DShowcase && !fastOpen && !reduceMotion) {
         await new Promise<void>((resolve) => {
           lidTimeoutRef.current = window.setTimeout(resolve, 1500);
         });
@@ -267,14 +268,14 @@ export const CasesView: React.FC<CasesViewProps> = ({
       }
 
       setTapeItems(generated);
-      setTapeOffset(0);
+      tapeReelRef.current?.style.setProperty('transform', 'translate3d(0,0,0)');
 
-      requestAnimationFrame(() => {
+      requestAnimationFrame(() => requestAnimationFrame(() => {
         const containerWidth = tapeContainerRef.current?.clientWidth ?? 800;
         const jitter = (Math.random() - 0.5) * 44;
         const targetOffset =
           winIndex * CARD_SLOT_WIDTH + CARD_SLOT_WIDTH / 2 - containerWidth / 2 + jitter;
-        const duration = fastOpen ? 650 : 3900;
+        const duration = reduceMotion || fastOpen ? 650 : 3900;
         const startTime = performance.now();
         let lastSlotIndex = Math.floor(containerWidth / 2 / CARD_SLOT_WIDTH);
 
@@ -283,7 +284,7 @@ export const CasesView: React.FC<CasesViewProps> = ({
           const progress = Math.min(1, elapsed / duration);
           const eased = 1 - Math.pow(1 - progress, 4.2);
           const currentOffset = targetOffset * eased;
-          setTapeOffset(currentOffset);
+          tapeReelRef.current?.style.setProperty('transform', `translate3d(-${currentOffset}px,0,0)`);
 
           const currentSlotIndex = Math.floor((currentOffset + containerWidth / 2) / CARD_SLOT_WIDTH);
           if (currentSlotIndex !== lastSlotIndex) {
@@ -306,7 +307,7 @@ export const CasesView: React.FC<CasesViewProps> = ({
         };
 
         animRef.current = requestAnimationFrame(animate);
-      });
+      }));
     } catch (err) {
       setIsOpeningLid(false);
       setIsOpening(false);
@@ -639,12 +640,7 @@ export const CasesView: React.FC<CasesViewProps> = ({
                 <div className="absolute inset-y-0 left-0 w-24 bg-gradient-to-r from-[#0B0D10] to-transparent z-10 pointer-events-none" />
                 <div className="absolute inset-y-0 right-0 w-24 bg-gradient-to-l from-[#0B0D10] to-transparent z-10 pointer-events-none" />
 
-                <div
-                  className="flex items-center will-change-transform"
-                  style={{
-                    transform: `translate3d(-${tapeOffset}px, 0, 0)`,
-                  }}
-                >
+                <div ref={tapeReelRef} className="flex items-center will-change-transform">
                   {tapeItems.map((item, idx) => (
                     <div
                       key={`${item.id}-${idx}`}

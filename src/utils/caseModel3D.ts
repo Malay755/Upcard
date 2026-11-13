@@ -256,7 +256,7 @@ function mulberry32(seed: number): () => number {
 
 export function resolveCaseTheme3D(caseBox: Pick<CaseBox, 'id' | 'name' | 'tier'>): CaseTheme3D {
   if (PRESET_THEMES[caseBox.id]) {
-    return PRESET_THEMES[caseBox.id];
+    return { ...PRESET_THEMES[caseBox.id], bodyColor: '#353a32', lidColor: '#292e28', bumperColor: '#151815', hardwareColor: '#858a7f' };
   }
   const h = hashString(caseBox.id + caseBox.name);
   const pool = FALLBACK_POOL_BY_TIER[caseBox.tier] ?? FALLBACK_POOL_BY_TIER.rare;
@@ -264,6 +264,10 @@ export function resolveCaseTheme3D(caseBox: Pick<CaseBox, 'id' | 'name' | 'tier'
   return {
     id: caseBox.id,
     ...variant,
+    bodyColor: '#353a32',
+    lidColor: '#292e28',
+    bumperColor: '#151815',
+    hardwareColor: '#858a7f',
     labelTag: 'CS2 // WEAPON CASE',
     serialCode: `WC-${String(h % 90 + 10)} // SERIES`,
   };
@@ -309,6 +313,7 @@ function createCS2PolymerTextures(
   map: THREE.CanvasTexture;
   roughnessMap: THREE.CanvasTexture;
   bumpMap: THREE.CanvasTexture;
+  normalMap: THREE.CanvasTexture;
 } {
   const size = detectSoftwareWebGL() ? 256 : 512;
   const rand = mulberry32(hashString(seedStr));
@@ -441,7 +446,32 @@ function createCS2PolymerTextures(
   bumpMap.wrapT = THREE.RepeatWrapping;
   bumpMap.repeat.set(2.5, 2.5);
 
-  return { map, roughnessMap, bumpMap };
+  // Convert the deterministic micro-height texture into a tangent-space normal map.
+  const heights = bCtx.getImageData(0, 0, 256, 256).data;
+  const normalCanvas = document.createElement('canvas');
+  normalCanvas.width = normalCanvas.height = 256;
+  const normalContext = normalCanvas.getContext('2d')!;
+  const normalPixels = normalContext.createImageData(256, 256);
+  for (let y = 0; y < 256; y++) {
+    for (let x = 0; x < 256; x++) {
+      const left = heights[(y * 256 + (x + 255) % 256) * 4];
+      const right = heights[(y * 256 + (x + 1) % 256) * 4];
+      const up = heights[(((y + 255) % 256) * 256 + x) * 4];
+      const down = heights[(((y + 1) % 256) * 256 + x) * 4];
+      const offset = (y * 256 + x) * 4;
+      normalPixels.data[offset] = 128 + (left - right) * 2;
+      normalPixels.data[offset + 1] = 128 + (up - down) * 2;
+      normalPixels.data[offset + 2] = 238;
+      normalPixels.data[offset + 3] = 255;
+    }
+  }
+  normalContext.putImageData(normalPixels, 0, 0);
+  const normalMap = new THREE.CanvasTexture(normalCanvas);
+  normalMap.wrapS = THREE.RepeatWrapping;
+  normalMap.wrapT = THREE.RepeatWrapping;
+  normalMap.repeat.set(2.5, 2.5);
+
+  return { map, roughnessMap, bumpMap, normalMap };
 }
 
 /**
@@ -708,12 +738,8 @@ function createRoundedPlateGeometry(w: number, h: number, r: number, depth: numb
 }
 
 /**
- * Builds an exact AAA Counter-Strike 2 Kilowatt / Revolution tactical weapon case replica:
- * - Wide tactical rifle/weapon-case proportions (W=2.48, D=1.52)
- * - Molded polymer PBR textures with edge scuffs, micro-scratches, roughness smudges & stipple bump
- * - Front carry handle pocket, knurled purge valve dial, dual heavy articulated cam clasps,
- *   3-knuckle rear steel hinges, X-brace ribbed lid crown, tactical corner guards
- * - Inside cavity with dark charcoal foam trim, bright golden-orange glow core & volumetric light rays
+ * Builds an original game-inspired hard-shell weapon case with industrial proportions,
+ * molded polymer PBR maps, worn steel hardware, a hinged carry handle and readable stencils.
  */
 export function buildTacticalCaseGroup(
   caseBox: Pick<CaseBox, 'id' | 'name' | 'tier'>,
@@ -741,7 +767,7 @@ export function buildTacticalCaseGroup(
     caseBox.id + caseBox.name,
     maxAnisotropy
   );
-  textures.push(polymerMaps.map, polymerMaps.roughnessMap, polymerMaps.bumpMap);
+  textures.push(polymerMaps.map, polymerMaps.roughnessMap, polymerMaps.bumpMap, polymerMaps.normalMap);
 
   const decalTex = createCS2DecalPlateTexture(theme, maxAnisotropy);
   textures.push(decalTex);
@@ -757,9 +783,11 @@ export function buildTacticalCaseGroup(
       map: polymerMaps.map,
       roughnessMap: polymerMaps.roughnessMap,
       roughness: 0.92, // modulated by roughnessMap (0.38..0.68)
-      metalness: 0.14,
+      metalness: 0.035,
       bumpMap: polymerMaps.bumpMap,
-      bumpScale: 0.018,
+      bumpScale: 0.004,
+      normalMap: polymerMaps.normalMap,
+      normalScale: new THREE.Vector2(0.3, 0.3),
     })
   );
 
@@ -768,9 +796,11 @@ export function buildTacticalCaseGroup(
       color: theme.lidColor,
       roughnessMap: polymerMaps.roughnessMap,
       roughness: 0.88,
-      metalness: 0.18,
+      metalness: 0.045,
       bumpMap: polymerMaps.bumpMap,
-      bumpScale: 0.018,
+      bumpScale: 0.004,
+      normalMap: polymerMaps.normalMap,
+      normalScale: new THREE.Vector2(0.28, 0.28),
     })
   );
 
@@ -780,15 +810,15 @@ export function buildTacticalCaseGroup(
       roughness: 0.78,
       metalness: 0.1,
       bumpMap: polymerMaps.bumpMap,
-      bumpScale: 0.01,
+      bumpScale: 0.004,
     })
   );
 
   const steelMat = trackMat(
     new THREE.MeshPhysicalMaterial({
       color: '#464E59',
-      roughness: 0.28,
-      metalness: 0.92,
+      roughness: 0.38,
+      metalness: 0.84,
       clearcoat: 0.25,
       clearcoatRoughness: 0.24,
     })
@@ -797,8 +827,8 @@ export function buildTacticalCaseGroup(
   const hardwareMat = trackMat(
     new THREE.MeshPhysicalMaterial({
       color: theme.hardwareColor,
-      roughness: 0.22,
-      metalness: 0.94,
+      roughness: 0.34,
+      metalness: 0.82,
       clearcoat: 0.4,
       clearcoatRoughness: 0.16,
     })
@@ -807,10 +837,10 @@ export function buildTacticalCaseGroup(
   const accentMat = trackMat(
     new THREE.MeshStandardMaterial({
       color: theme.accentColor,
-      roughness: 0.34,
-      metalness: 0.55,
+      roughness: 0.62,
+      metalness: 0.12,
       emissive: theme.accentColor,
-      emissiveIntensity: 0.16,
+      emissiveIntensity: 0.025,
     })
   );
 
@@ -936,20 +966,7 @@ export function buildTacticalCaseGroup(
   frontStripe.position.set(0.08, footH + baseH * 0.16, D / 2 + 0.034);
   root.add(frontStripe);
 
-  // 6. Signature CS2 Purge / Pressure-Equalization Valve Dial (Front-Left)
-  const valveOuterGeo = trackGeo(new THREE.CylinderGeometry(0.075, 0.082, 0.045, 18));
-  valveOuterGeo.rotateX(Math.PI / 2);
-  const valveOuter = new THREE.Mesh(valveOuterGeo, steelMat);
-  valveOuter.position.set(-0.62, footH + baseH * 0.25, D / 2 + 0.03);
-  root.add(valveOuter);
-
-  const valveCoreGeo = trackGeo(new THREE.CylinderGeometry(0.04, 0.04, 0.052, 12));
-  valveCoreGeo.rotateX(Math.PI / 2);
-  const valveCore = new THREE.Mesh(valveCoreGeo, hardwareMat);
-  valveCore.position.set(-0.62, footH + baseH * 0.25, D / 2 + 0.035);
-  root.add(valveCore);
-
-  // 7. Bolted Corner Bumper Armor (Lower Base)
+  // 6. Bolted corner guards and recessed fasteners
   const cornerGeo = trackGeo(new THREE.BoxGeometry(0.24, 0.22, 0.24));
   [
     [-W / 2 + 0.035, footH + 0.1, D / 2 - 0.035],
@@ -963,20 +980,7 @@ export function buildTacticalCaseGroup(
     root.add(corner);
   });
 
-  // 8. Heavy Folding Front Carry Handle Bar + Side Grips
-  const frontHandleBracketGeo = trackGeo(new THREE.BoxGeometry(0.09, 0.09, 0.075));
-  [-0.3, 0.3].forEach((hx) => {
-    const hb = new THREE.Mesh(frontHandleBracketGeo, steelMat);
-    hb.position.set(hx, footH + baseH * 0.85, D / 2 + 0.032);
-    root.add(hb);
-  });
-  const frontHandleGripGeo = trackGeo(new THREE.CylinderGeometry(0.035, 0.035, 0.56, 12));
-  frontHandleGripGeo.rotateZ(Math.PI / 2);
-  const frontHandleGrip = new THREE.Mesh(frontHandleGripGeo, bumperMat);
-  frontHandleGrip.position.set(0, footH + baseH * 0.85, D / 2 + 0.068);
-  frontHandleGrip.castShadow = true;
-  root.add(frontHandleGrip);
-
+  // 7. Recessed side carry rails
   const sideMountGeo = trackGeo(new THREE.BoxGeometry(0.08, 0.12, 0.56));
   const sideBarGeo = trackGeo(new THREE.CylinderGeometry(0.036, 0.036, 0.44, 14));
   sideBarGeo.rotateX(Math.PI / 2);
@@ -1064,31 +1068,47 @@ export function buildTacticalCaseGroup(
   innerLidFoam.position.set(0, 0.002, D / 2);
   lidPivot.add(innerLidFoam);
 
-  // Molded Raised Crown Armor & CS2 X-Brace / Diagonal Ribs on Top Lid
+  // Molded lid crown with parallel structural ribs, like a reinforced field case
   const crownGeo = trackGeo(new THREE.BoxGeometry(W * 0.78, 0.052, D * 0.74));
   const crownMesh = new THREE.Mesh(crownGeo, lidMat);
   crownMesh.position.set(0, lidH + 0.045, D / 2);
   crownMesh.castShadow = true;
   lidPivot.add(crownMesh);
 
-  // Signature CS2 Kilowatt-style X-truss diagonal lid braces
-  const diagLen = Math.hypot(W * 0.68, D * 0.62);
-  const diagBarGeo = trackGeo(new THREE.BoxGeometry(diagLen, 0.038, 0.085));
-  const diagYaw = Math.atan2(D * 0.62, W * 0.68);
-  [-1, 1].forEach((dir) => {
-    const brace = new THREE.Mesh(diagBarGeo, bumperMat);
-    brace.position.set(0, lidH + 0.072, D / 2);
-    brace.rotation.y = dir * diagYaw;
-    brace.castShadow = true;
-    lidPivot.add(brace);
+  const crownRibGeo = trackGeo(new THREE.BoxGeometry(0.065, 0.035, D * 0.58));
+  [-0.72, -0.43, 0.43, 0.72].forEach((x) => {
+    const rib = new THREE.Mesh(crownRibGeo, bumperMat);
+    rib.position.set(x, lidH + 0.078, D / 2);
+    rib.castShadow = true;
+    lidPivot.add(rib);
   });
 
-  // Central machined metallic cap at X intersection
-  const centerHubGeo = trackGeo(new THREE.BoxGeometry(0.46, 0.05, 0.34));
-  const centerHub = new THREE.Mesh(centerHubGeo, steelMat);
-  centerHub.position.set(0, lidH + 0.078, D / 2);
-  centerHub.castShadow = true;
-  lidPivot.add(centerHub);
+  // Small recessed ID plate and a mechanically plausible fold-down carry handle.
+  const lidIdPlate = new THREE.Mesh(trackGeo(new THREE.BoxGeometry(0.62, 0.024, 0.36)), steelMat);
+  lidIdPlate.position.set(0, lidH + 0.075, D / 2 - 0.03);
+  lidPivot.add(lidIdPlate);
+  const handleMountGeo = trackGeo(new THREE.BoxGeometry(0.12, 0.055, 0.18));
+  [-0.3, 0.3].forEach((x) => {
+    const mount = new THREE.Mesh(handleMountGeo, steelMat);
+    mount.position.set(x, lidH + 0.105, D / 2 - 0.02);
+    lidPivot.add(mount);
+  });
+  const handleCurve = new THREE.CatmullRomCurve3([
+    new THREE.Vector3(-0.3, lidH + 0.12, D / 2 - 0.02),
+    new THREE.Vector3(-0.3, lidH + 0.31, D / 2 - 0.02),
+    new THREE.Vector3(-0.2, lidH + 0.34, D / 2 - 0.02),
+    new THREE.Vector3(0.2, lidH + 0.34, D / 2 - 0.02),
+    new THREE.Vector3(0.3, lidH + 0.31, D / 2 - 0.02),
+    new THREE.Vector3(0.3, lidH + 0.12, D / 2 - 0.02),
+  ]);
+  const handle = new THREE.Mesh(trackGeo(new THREE.TubeGeometry(handleCurve, 32, 0.026, 8, false)), steelMat);
+  handle.castShadow = true;
+  lidPivot.add(handle);
+  const handleGripGeo = trackGeo(new THREE.CylinderGeometry(0.047, 0.047, 0.36, 12));
+  handleGripGeo.rotateZ(Math.PI / 2);
+  const handleGrip = new THREE.Mesh(handleGripGeo, bumperMat);
+  handleGrip.position.set(0, lidH + 0.33, D / 2 - 0.02);
+  lidPivot.add(handleGrip);
 
   // Colored tactical stripe along front edge of the CS2 lid
   const lidTrimGeo = trackGeo(new THREE.BoxGeometry(0.96, 0.038, 0.042));
@@ -1269,7 +1289,7 @@ function getSharedThumbStudio() {
 
 export function renderCaseThumbnail3D(caseBox: Pick<CaseBox, 'id' | 'name' | 'tier'>): string | null {
   const theme = resolveCaseTheme3D(caseBox);
-  const cacheKey = `cs2_v2_${caseBox.id}_${theme.accentColor}_${theme.crest}`;
+  const cacheKey = `case_v3_${caseBox.id}_${theme.bodyColor}_${theme.accentColor}_${theme.crest}`;
   const existing = thumbnailCache.get(cacheKey);
   if (existing) return existing;
 
