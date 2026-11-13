@@ -1,0 +1,6 @@
+{
+  "name": "CARDUP — Апгрейд карточек и кейсы",
+  "description": "Платформа апгрейдов коллекционных карточек, открытия кейсов и управления экономикой на Т-коинах.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

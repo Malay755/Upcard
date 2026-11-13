@@ -1,0 +1,259 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+@layer base {
+  :root {
+    --font-display: 'Outfit', system-ui, sans-serif;
+    --font-sans: 'Plus Jakarta Sans', system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono', monospace;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    background-color: #0b0d10;
+    color: #f3f4f6;
+    background-image:
+      radial-gradient(ellipse 80% 45% at 50% 0%, rgba(250, 204, 21, 0.04) 0%, transparent 70%),
+      radial-gradient(circle at 50% 50%, #101216 0%, #090b0d 100%);
+    min-height: 100vh;
+  }
+
+  h1, h2, h3, .font-display {
+    font-family: var(--font-display);
+  }
+
+  .font-mono-num {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@keyframes slow-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-slow-spin {
+  animation: slow-spin 18s linear infinite;
+}
+
+@keyframes tab-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-tab-enter {
+  animation: tab-enter 0.22s cubic-bezier(0.16, 1, 0.3, 1) backwards;
+}
+
+@keyframes card-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.animate-card-pop {
+  animation: card-pop 0.22s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes banner-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-banner-in {
+  animation: banner-in 0.28s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes legendary-backdrop {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.animate-legendary-backdrop {
+  animation: legendary-backdrop 0.4s ease-out both;
+}
+
+@keyframes legendary-rays {
+  from {
+    opacity: 0;
+    transform: scale(0.6) rotate(0deg);
+  }
+  to {
+    opacity: 0.75;
+    transform: scale(1) rotate(24deg);
+  }
+}
+
+.animate-legendary-rays {
+  animation:
+    legendary-rays 1.1s ease-out both,
+    slow-spin 18s linear 1.1s infinite;
+}
+
+@keyframes legendary-glow {
+  0% {
+    opacity: 0;
+    transform: scale(0.3);
+  }
+  55% {
+    opacity: 1;
+    transform: scale(1.25);
+  }
+  100% {
+    opacity: 0.8;
+    transform: scale(1);
+  }
+}
+
+.animate-legendary-glow {
+  animation: legendary-glow 1.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes legendary-card-3d {
+  0% {
+    opacity: 0;
+    transform: scale(0.55) rotateX(18deg) rotateY(0deg);
+  }
+  12% {
+    opacity: 1;
+    transform: scale(0.84) rotateX(12deg) rotateY(360deg);
+  }
+  34% {
+    opacity: 1;
+    transform: scale(0.95) rotateX(7deg) rotateY(1080deg);
+  }
+  65% {
+    opacity: 1;
+    transform: scale(1.01) rotateX(3deg) rotateY(1360deg);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) rotateX(0deg) rotateY(1440deg);
+  }
+}
+
+.perspective-stage {
+  perspective: 1400px;
+}
+
+.preserve-3d {
+  transform-style: preserve-3d;
+}
+
+.backface-hidden {
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+
+.animate-legendary-card-3d {
+  animation: legendary-card-3d 2.7s cubic-bezier(0.12, 0.86, 0.2, 1) 0.1s both;
+}
+
+@keyframes legendary-shine {
+  0% {
+    opacity: 0;
+    transform: translateX(-140%) rotate(22deg);
+  }
+  20% {
+    opacity: 0.75;
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(220%) rotate(22deg);
+  }
+}
+
+.animate-legendary-shine {
+  animation: legendary-shine 0.9s ease-out 2.05s both;
+}
+
+@keyframes legendary-title-in {
+  from {
+    opacity: 0;
+    transform: translateY(-14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-legendary-title {
+  animation: legendary-title-in 0.6s cubic-bezier(0.16, 1, 0.3, 1) 0.15s both;
+}
+
+@keyframes legendary-actions-in {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-legendary-actions {
+  animation: legendary-actions-in 0.6s cubic-bezier(0.16, 1, 0.3, 1) 1.75s both;
+}
+
+@keyframes wheel-pulse {
+  0% {
+    opacity: 0.85;
+    transform: scale(0.92);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.16);
+  }
+}
+
+.animate-wheel-pulse {
+  animation: wheel-pulse 0.75s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+
+/* Custom subtle scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #0d0f12;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #262930;
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #3a3f4b;
+}
