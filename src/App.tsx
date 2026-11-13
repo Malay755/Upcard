@@ -14,6 +14,7 @@ const CasesView = lazy(() => import('./components/CasesView').then((m) => ({ def
 const BonusesView = lazy(() => import('./components/BonusesView').then((m) => ({ default: m.BonusesView })));
 const ProfileView = lazy(() => import('./components/ProfileView').then((m) => ({ default: m.ProfileView })));
 const AdminView = lazy(() => import('./components/AdminView').then((m) => ({ default: m.AdminView })));
+const BattlesView = lazy(() => import('./components/BattlesView').then((m) => ({ default: m.BattlesView })));
 
 async function apiJson<T>(url: string, options?: RequestInit): Promise<T> {
   const res = await fetch(url, {
@@ -42,6 +43,7 @@ export default function App() {
   const [muted, setMuted] = useState(false);
   const [liveDrops, setLiveDrops] = useState<LiveDropEntry[]>([]);
   const [friendInviteNotice, setFriendInviteNotice] = useState('');
+  const [realtimeNotice, setRealtimeNotice] = useState<{ text: string; tab: AppTab } | null>(null);
   const handledInviteCode = useRef('');
 
   const loadBootstrap = useCallback(async () => {
@@ -90,9 +92,54 @@ export default function App() {
     }
   }, []);
 
+  const refreshPayload = useCallback(async () => {
+    try {
+      const current = await apiJson<BootstrapPayload>('/api/bootstrap');
+      if (current.authenticated) setPayload(current);
+    } catch {
+      // Keep the current session visible while a transient refresh fails.
+    }
+  }, []);
+
   useEffect(() => {
     loadBootstrap();
   }, [loadBootstrap]);
+
+  useEffect(() => {
+    if (!isAuthorized) return;
+    let stopped = false;
+    let retryTimer = 0;
+    let socket: WebSocket | null = null;
+    const connect = () => {
+      if (stopped) return;
+      socket = new WebSocket(`${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`);
+      socket.onmessage = (event) => {
+        let message: { type?: string; username?: string } = {};
+        try { message = JSON.parse(event.data); } catch { return; }
+        const noticeTypes: Record<string, { text: string; tab: AppTab }> = {
+          friend_request: { text: `${message.username ?? 'Игрок'} отправил запрос в друзья`, tab: 'profile' },
+          friend_request_accepted: { text: `${message.username ?? 'Игрок'} принял запрос в друзья`, tab: 'profile' },
+          battle_invitation: { text: `${message.username ?? 'Друг'} приглашает тебя в батл`, tab: 'battles' },
+          battle_invitation_accepted: { text: `${message.username ?? 'Игрок'} принял приглашение в батл`, tab: 'battles' },
+          battle_invitation_declined: { text: `${message.username ?? 'Игрок'} отклонил приглашение в батл`, tab: 'battles' },
+          battle_invitation_expired: { text: 'Приглашение в батл устарело: комната уже занята', tab: 'battles' },
+        };
+        if (message.type && noticeTypes[message.type]) {
+          setRealtimeNotice(noticeTypes[message.type]);
+          soundFX.playCoin();
+          if ('Notification' in window && Notification.permission === 'granted' && document.hidden) {
+            const notification = new Notification('UPGRADER', { body: noticeTypes[message.type].text, tag: message.type });
+            notification.onclick = () => { window.focus(); setActiveTab(noticeTypes[message.type!].tab); notification.close(); };
+          }
+          void refreshPayload();
+        }
+      };
+      socket.onclose = () => { if (!stopped) retryTimer = window.setTimeout(connect, 2500); };
+    };
+    connect();
+    const poll = window.setInterval(() => { void refreshPayload(); }, 8000);
+    return () => { stopped = true; window.clearTimeout(retryTimer); window.clearInterval(poll); socket?.close(); };
+  }, [isAuthorized, refreshPayload]);
 
   useEffect(() => {
     if (payload) setLiveDrops(payload.liveDrops);
@@ -137,24 +184,24 @@ export default function App() {
     await loadBootstrap();
   };
 
-  const handleDeposit = async (amount: number, method: string, promoCode: string) => {
+  const handleCredit = async (amount: number) => {
     if (!payload) throw new Error('Пользователь не загружен.');
-    const res = await apiJson<{
-      payload: BootstrapPayload;
-      receipt: {
-        txId: string;
-        method: string;
-        baseAmount: number;
-        bonusAmount: number;
-        totalCredited: number;
-        appliedPromo: string | null;
-      };
-    }>('/api/finance/deposit', {
+    const res = await apiJson<{ payload: BootstrapPayload; credited: number }>('/api/finance/deposit', {
       method: 'POST',
-      body: JSON.stringify({ amount, method, promoCode }),
+      body: JSON.stringify({ amount }),
     });
     setPayload(res.payload);
-    return res.receipt;
+    soundFX.playCoin();
+    return res.credited;
+  };
+
+  const openDeposit = () => {
+    if (!isAuthorized) { setTelegramLoginOpen(true); return; }
+    setDepositOpen(true);
+  };
+
+  const enableNotifications = () => {
+    if ('Notification' in window && Notification.permission === 'default') void Notification.requestPermission();
   };
 
   const handleRollUpgrade = async (params: {
@@ -231,12 +278,19 @@ export default function App() {
   };
 
   const handleAddFriend = async (code: string) => {
-    const res = await apiJson<{ payload: BootstrapPayload }>('/api/friends', {
+    const res = await apiJson<{ payload: BootstrapPayload; requestSent?: boolean }>('/api/friends', {
       method: 'POST',
       body: JSON.stringify({ code }),
     });
     setPayload(res.payload);
     return res.payload;
+  };
+
+  const handleFriendRequest = async (id: string, accept: boolean) => {
+    const res = await apiJson<{ payload: BootstrapPayload }>(`/api/friends/requests/${encodeURIComponent(id)}${accept ? '/accept' : ''}`, {
+      method: accept ? 'POST' : 'DELETE', body: accept ? JSON.stringify({}) : undefined,
+    });
+    setPayload(res.payload);
   };
 
   const handleRemoveFriend = async (friendId: string) => {
@@ -259,8 +313,8 @@ export default function App() {
     if (!code || handledInviteCode.current === code) return;
     handledInviteCode.current = code;
     void handleAddFriend(code)
-      .then(() => setFriendInviteNotice('Приглашение принято: вы добавили друг друга в друзья.'))
-      .catch((error: unknown) => setFriendInviteNotice(error instanceof Error ? error.message : 'Не удалось принять приглашение.'))
+      .then(() => setFriendInviteNotice('Запрос отправлен. Он появится в друзьях после согласия получателя.'))
+      .catch((error: unknown) => setFriendInviteNotice(error instanceof Error ? error.message : 'Не удалось отправить запрос.'))
       .finally(() => {
         const url = new URL(window.location.href);
         url.searchParams.delete('friend');
@@ -348,6 +402,7 @@ export default function App() {
         user={payload.user}
         isAuthorized={isAuthorized}
         onOpenTelegramLogin={() => setTelegramLoginOpen(true)}
+        onOpenDeposit={openDeposit}
         onLogout={handleLogout}
         muted={muted}
         onToggleMute={handleToggleMute}
@@ -381,7 +436,7 @@ export default function App() {
               onOpenTelegramLogin={() => setTelegramLoginOpen(true)}
               onOpenCase={handleOpenCase}
               onSellItems={handleSellItems}
-              onOpenDeposit={() => setDepositOpen(true)}
+              onOpenDeposit={openDeposit}
               onGoToCreateCase={() => setActiveTab('admin')}
             />
           )}
@@ -394,6 +449,21 @@ export default function App() {
             />
           )}
 
+          {activeTab === 'battles' && (
+            <BattlesView
+              user={payload.user}
+              items={payload.items}
+              cases={payload.cases}
+              friends={payload.friends}
+              invitations={payload.battleInvitations}
+              isAuthorized={isAuthorized}
+              onOpenTelegramLogin={() => setTelegramLoginOpen(true)}
+              onEnableNotifications={enableNotifications}
+              onSellItems={handleSellItems}
+              onPayload={setPayload}
+            />
+          )}
+
           {activeTab === 'profile' && (
         <ProfileView
               user={payload.user}
@@ -402,12 +472,15 @@ export default function App() {
               transactions={payload.transactions}
               upgradeHistory={payload.upgradeHistory}
               friends={payload.friends}
+              friendRequestsReceived={payload.friendRequestsReceived}
               friendInviteNotice={friendInviteNotice}
               onOpenTelegramLogin={() => setTelegramLoginOpen(true)}
               onSellItems={handleSellItems}
-              onOpenDeposit={() => setDepositOpen(true)}
+              onOpenDeposit={openDeposit}
               onGoToUpgrade={() => setActiveTab('upgrade')}
               onAddFriend={handleAddFriend}
+              onAcceptFriendRequest={(id) => handleFriendRequest(id, true)}
+              onDeclineFriendRequest={(id) => handleFriendRequest(id, false)}
               onRemoveFriend={handleRemoveFriend}
               onGetFriendProfile={handleGetFriendProfile}
             />
@@ -438,8 +511,14 @@ export default function App() {
       <DepositModal
         isOpen={depositOpen}
         onClose={() => setDepositOpen(false)}
-        onDeposit={handleDeposit}
+        onCredit={handleCredit}
       />
+
+      {realtimeNotice && <div role="status" className="fixed bottom-5 right-5 z-50 flex max-w-sm items-center gap-3 rounded-xl border border-amber-300/20 bg-[#171a20] p-4 shadow-2xl">
+        <span className="flex-1 text-sm text-white">{realtimeNotice.text}</span>
+        <button type="button" onClick={() => { setActiveTab(realtimeNotice.tab); setRealtimeNotice(null); }} className="whitespace-nowrap rounded-lg bg-amber-400 px-3 py-2 text-xs font-bold text-slate-950">Открыть</button>
+        <button type="button" onClick={() => setRealtimeNotice(null)} aria-label="Закрыть уведомление" className="text-slate-500">×</button>
+      </div>}
 
       <TelegramLoginModal
         isOpen={telegramLoginOpen}

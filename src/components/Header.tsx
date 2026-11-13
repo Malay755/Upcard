@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { LogOut, Volume2, VolumeX } from 'lucide-react';
+import { Coins, LogOut, Volume2, VolumeX } from 'lucide-react';
 import type { AppTab, UserProfile } from '../types';
 import { TelegramPaperPlaneIcon } from './TelegramLoginModal';
 
@@ -9,6 +9,7 @@ interface HeaderProps {
   user: UserProfile;
   isAuthorized: boolean;
   onOpenTelegramLogin: () => void;
+  onOpenDeposit: () => void;
   onLogout: () => void;
   muted: boolean;
   onToggleMute: () => void;
@@ -17,6 +18,7 @@ interface HeaderProps {
 const NAV_ITEMS: { id: AppTab; label: string }[] = [
   { id: 'upgrade', label: 'Апгрейд' },
   { id: 'cases', label: 'Кейсы' },
+  { id: 'battles', label: 'Батлы' },
   { id: 'bonuses', label: 'Бонусы' },
   { id: 'profile', label: 'Профиль' },
   { id: 'admin', label: 'Админ' },
@@ -28,6 +30,7 @@ export const Header: React.FC<HeaderProps> = ({
   user,
   isAuthorized,
   onOpenTelegramLogin,
+  onOpenDeposit,
   onLogout,
   muted,
   onToggleMute,
@@ -85,6 +88,9 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Right Zone: Mute + Telegram Sign-In / Profile */}
         <div className="flex items-center gap-2.5 shrink-0">
+          <button type="button" onClick={onOpenDeposit} className="inline-flex items-center gap-1.5 rounded-lg bg-[#FACC15] px-3 py-2 text-xs font-bold text-[#0B0D10] transition-colors hover:bg-[#FDE047] whitespace-nowrap">
+            <Coins className="h-3.5 w-3.5" /><span>Пополнить</span>
+          </button>
           <button
             type="button"
             onClick={onToggleMute}
@@ -145,6 +151,7 @@ export const Header: React.FC<HeaderProps> = ({
         aria-label="Мобильная навигация"
         className="flex md:hidden items-center justify-around border-t border-white/[0.06] px-2 py-1.5 overflow-x-auto"
       >
+        <button type="button" onClick={onOpenDeposit} className="mx-1 inline-flex items-center gap-1 rounded-md bg-[#FACC15] px-2.5 py-1.5 text-xs font-bold text-[#0B0D10] whitespace-nowrap"><Coins className="h-3.5 w-3.5"/> Пополнить</button>
         {NAV_ITEMS.map((item) => {
           const isActive = activeTab === item.id;
           return (

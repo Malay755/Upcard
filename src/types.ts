@@ -2,7 +2,9 @@ export type Rarity = 'common' | 'rare' | 'epic' | 'legendary';
 
 export type RollMode = 'under' | 'over';
 
-export type AppTab = 'upgrade' | 'cases' | 'bonuses' | 'profile' | 'admin';
+export type AppTab = 'upgrade' | 'cases' | 'battles' | 'bonuses' | 'profile' | 'admin';
+export type BattleMode = 'cases' | 'upgrade';
+export type BattleStatus = 'waiting' | 'completed' | 'cancelled';
 
 export interface ItemCard {
   id: string;
@@ -17,7 +19,7 @@ export interface InventoryItem {
   instanceId: string;
   itemId: string;
   acquiredAt: number;
-  source: 'starter' | 'upgrade' | 'case' | 'admin';
+  source: 'starter' | 'upgrade' | 'case' | 'admin' | 'battle';
 }
 
 export interface CaseBox {
@@ -33,11 +35,14 @@ export interface CaseBox {
 
 export type TransactionType =
   | 'welcome_bonus'
+  | 'manual_credit'
   | 'deposit'
   | 'case_open'
   | 'item_sell'
   | 'upgrade_stake'
   | 'upgrade_win'
+  | 'battle_stake'
+  | 'battle_win'
   | 'daily_bonus'
   | 'referral_bonus'
   | 'referral_commission';
@@ -106,6 +111,57 @@ export interface FriendProfile {
   createdAt: number;
 }
 
+export interface FriendRequestSummary {
+  id: string;
+  fromUserId: string;
+  fromUsername: string;
+  fromTelegramUsername?: string;
+  fromPhotoUrl?: string;
+  createdAt: number;
+}
+
+export interface BattleInvitationSummary {
+  id: string;
+  roomId: string;
+  fromUsername: string;
+  mode: BattleMode;
+  caseCount?: number;
+  createdAt: number;
+}
+
+export interface BattleRoomSummary {
+  id: string;
+  mode: BattleMode;
+  status: BattleStatus;
+  hostUserId: string;
+  hostUsername: string;
+  guestUserId: string | null;
+  guestUsername: string | null;
+  hasPassword: boolean;
+  caseId?: string;
+  caseName?: string;
+  caseCount?: number;
+  hostStakeValue: number;
+  guestStakeValue: number;
+  createdAt: number;
+  startedAt?: number;
+  durationMs?: number;
+  winnerUserId?: string | null;
+  hostWinChance?: number;
+  rollValue?: number;
+  roundResults?: { round: number; hostDrop: ItemCard; guestDrop: ItemCard }[];
+  rewardInventoryIds?: string[];
+  hostItems?: InventoryItem[];
+  guestItems?: InventoryItem[];
+}
+
+export interface RealtimeEvent {
+  type: string;
+  roomId?: string;
+  round?: number;
+  payload?: unknown;
+}
+
 export interface UserProfile {
   id: string;
   username: string;
@@ -148,5 +204,7 @@ export interface BootstrapPayload {
   upgradeHistory: UpgradeHistoryEntry[];
   liveDrops: LiveDropEntry[];
   friends: FriendSummary[];
+  friendRequestsReceived: FriendRequestSummary[];
+  battleInvitations: BattleInvitationSummary[];
   authenticated?: boolean;
 }

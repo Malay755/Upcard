@@ -3,6 +3,7 @@ import { Copy, Crown, ExternalLink, Users, UserMinus, UserPlus, X, Coins, Layout
 import type {
   BootstrapPayload,
   FriendProfile,
+  FriendRequestSummary,
   FriendSummary,
   ItemCard,
   Rarity,
@@ -22,23 +23,29 @@ interface ProfileViewProps {
   transactions: BootstrapPayload['transactions'];
   upgradeHistory: BootstrapPayload['upgradeHistory'];
   friends: FriendSummary[];
+  friendRequestsReceived: FriendRequestSummary[];
   friendInviteNotice: string;
   onOpenTelegramLogin: () => void;
   onSellItems: (instanceIds: string[]) => Promise<void>;
   onOpenDeposit: () => void;
   onGoToUpgrade: () => void;
   onAddFriend: (code: string) => Promise<BootstrapPayload>;
+  onAcceptFriendRequest: (id: string) => Promise<void>;
+  onDeclineFriendRequest: (id: string) => Promise<void>;
   onRemoveFriend: (friendId: string) => Promise<void>;
   onGetFriendProfile: (friendId: string) => Promise<FriendProfile>;
 }
 
 const TX_LABELS: Record<TransactionType, string> = {
+  manual_credit: 'Временное начисление',
   welcome_bonus: 'Стартовый бонус',
   deposit: 'Пополнение',
   case_open: 'Открытие кейса',
   item_sell: 'Продажа карточки',
   upgrade_stake: 'Ставка в апгрейд',
   upgrade_win: 'Выигрыш апгрейда',
+  battle_stake: 'Ставка в батле',
+  battle_win: 'Выигрыш в батле',
   daily_bonus: 'Ежедневный бонус',
   referral_bonus: 'Реферальный бонус',
   referral_commission: 'Реферальная комиссия 5%',
@@ -108,12 +115,15 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   transactions,
   upgradeHistory,
   friends,
+  friendRequestsReceived,
   friendInviteNotice,
   onOpenTelegramLogin,
   onSellItems,
   onOpenDeposit,
   onGoToUpgrade,
   onAddFriend,
+  onAcceptFriendRequest,
+  onDeclineFriendRequest,
   onRemoveFriend,
   onGetFriendProfile,
 }) => {
@@ -156,9 +166,22 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     try {
       await onAddFriend(friendCodeInput);
       setFriendCodeInput('');
-      setFriendMessage('Готово! Вы добавили друг друга в друзья.');
+      setFriendMessage('Запрос отправлен. Друг появится в списке после согласия.');
     } catch (error) {
       setFriendMessage(error instanceof Error ? error.message : 'Не удалось добавить друга.');
+    } finally {
+      setFriendLoading(false);
+    }
+  };
+
+  const handleFriendRequestChoice = async (id: string, accept: boolean) => {
+    setFriendLoading(true);
+    try {
+      if (accept) await onAcceptFriendRequest(id);
+      else await onDeclineFriendRequest(id);
+      setFriendMessage(accept ? 'Запрос принят. Вы теперь друзья.' : 'Запрос отклонён.');
+    } catch (error) {
+      setFriendMessage(error instanceof Error ? error.message : 'Не удалось обработать запрос.');
     } finally {
       setFriendLoading(false);
     }
@@ -383,6 +406,14 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             </button>
           </form>
           {(friendMessage || friendInviteNotice) && <p role="status" className="text-[11px] text-amber-200">{friendMessage || friendInviteNotice}</p>}
+          {friendRequestsReceived.length > 0 && <div className="space-y-2 rounded-xl border border-amber-300/20 bg-amber-300/[0.04] p-3">
+            <div className="text-[11px] font-bold text-amber-200">Входящие запросы ({friendRequestsReceived.length})</div>
+            {friendRequestsReceived.map((request) => <div key={request.id} className="flex items-center gap-2 text-xs">
+              <span className="min-w-0 flex-1 truncate text-white">{request.fromTelegramUsername ? `@${request.fromTelegramUsername}` : request.fromUsername}</span>
+              <button type="button" disabled={friendLoading} onClick={() => void handleFriendRequestChoice(request.id, true)} className="rounded-lg bg-emerald-500/15 px-2 py-1 font-semibold text-emerald-300 disabled:opacity-40">Принять</button>
+              <button type="button" disabled={friendLoading} onClick={() => void handleFriendRequestChoice(request.id, false)} className="rounded-lg bg-rose-500/10 px-2 py-1 font-semibold text-rose-300 disabled:opacity-40">Отклонить</button>
+            </div>)}
+          </div>}
         </div>
 
         <div className="min-w-0 space-y-2">
