@@ -24,8 +24,9 @@ export const BATTLE_CASE_ROUND_MS = ROUND_MS;
 
 export const BattleCaseLane: React.FC<Props> = ({ playerName, caseBox, pool, drop, roundIndex, startedAt }) => {
   const [phase, setPhase] = useState<'waiting' | 'lid' | 'reel' | 'done'>('waiting');
-  const [offset, setOffset] = useState(0);
   const tapeRef = useRef<HTMLDivElement>(null);
+  const reelRef = useRef<HTMLDivElement>(null);
+  const progressRef = useRef<HTMLDivElement>(null);
   const playedRoundRef = useRef(-1);
   const roundStart = startedAt + roundIndex * ROUND_MS;
   const tape = useMemo(() => {
@@ -35,10 +36,11 @@ export const BattleCaseLane: React.FC<Props> = ({ playerName, caseBox, pool, dro
   }, [roundIndex, drop.id, pool]);
 
   useEffect(() => {
-    setOffset(0);
+    reelRef.current?.style.setProperty('transform', 'translate3d(0,0,0)');
+    progressRef.current?.style.setProperty('transform', 'scaleX(0)');
     const tapeStart = roundStart + LID_MS;
     setPhase(Date.now() < roundStart ? 'waiting' : Date.now() < tapeStart ? 'lid' : 'reel');
-    let previousSlot = 0;
+    let previousSlot = -1;
     let raf = 0;
     let lidTimer = 0;
     let reelTimer = 0;
@@ -49,8 +51,9 @@ export const BattleCaseLane: React.FC<Props> = ({ playerName, caseBox, pool, dro
       const progress = Math.min(1, elapsed / REEL_MS);
       const eased = 1 - Math.pow(1 - progress, 4.2);
       const nextOffset = targetOffset * eased;
-      setOffset(nextOffset);
-      if (previousSlot === 0) previousSlot = Math.floor(containerWidth / 2 / SLOT_WIDTH);
+      reelRef.current?.style.setProperty('transform', `translate3d(-${nextOffset}px,0,0)`);
+      progressRef.current?.style.setProperty('transform', `scaleX(${progress})`);
+      if (previousSlot < 0) previousSlot = Math.floor(containerWidth / 2 / SLOT_WIDTH);
       const slot = Math.floor((nextOffset + containerWidth / 2) / SLOT_WIDTH);
       if (slot !== previousSlot && progress < 1) { previousSlot = slot; soundFX.playCaseTick(progress); }
       if (progress < 1) raf = window.requestAnimationFrame(animate);
@@ -73,14 +76,16 @@ export const BattleCaseLane: React.FC<Props> = ({ playerName, caseBox, pool, dro
       reelTimer = window.setTimeout(() => { setPhase('reel'); raf = window.requestAnimationFrame(animate); }, Math.max(0, tapeStart - Date.now()));
     } else {
       const containerWidth = tapeRef.current?.clientWidth ?? 520;
-      setPhase('done'); setOffset(WIN_INDEX * SLOT_WIDTH + SLOT_WIDTH / 2 - containerWidth / 2);
+      const targetOffset = WIN_INDEX * SLOT_WIDTH + SLOT_WIDTH / 2 - containerWidth / 2;
+      reelRef.current?.style.setProperty('transform', `translate3d(-${targetOffset}px,0,0)`);
+      progressRef.current?.style.setProperty('transform', 'scaleX(1)');
+      setPhase('done');
       if (playedRoundRef.current !== roundIndex) playedRoundRef.current = roundIndex;
     }
     return () => { window.clearTimeout(lidTimer); window.clearTimeout(reelTimer); cancelAnimationFrame(raf); };
   }, [roundIndex, roundStart, drop.id, drop.rarity, tape.length]);
 
   const isLidOpening = phase === 'lid';
-  const reelProgress = Math.min(1, offset / (WIN_INDEX * SLOT_WIDTH + SLOT_WIDTH / 2));
   const isReeling = phase === 'reel';
   const complete = phase === 'done';
   const rarityGlow = drop.rarity === 'legendary' ? 'border-amber-300/50 shadow-amber-300/20' : drop.rarity === 'epic' ? 'border-purple-300/40 shadow-purple-400/15' : 'border-emerald-300/25 shadow-emerald-300/10';
@@ -96,13 +101,13 @@ export const BattleCaseLane: React.FC<Props> = ({ playerName, caseBox, pool, dro
           <div className="pointer-events-none absolute inset-y-0 left-0 z-10 w-14 bg-gradient-to-r from-[#0B0D10] to-transparent"/>
           <div className="pointer-events-none absolute inset-y-0 right-0 z-10 w-14 bg-gradient-to-l from-[#0B0D10] to-transparent"/>
           <div className="pointer-events-none absolute bottom-0 left-1/2 top-0 z-20 w-[3px] -translate-x-1/2 bg-[#FACC15] shadow-[0_0_14px_rgba(250,204,21,0.9)]"/>
-          <div className="flex h-full items-center will-change-transform" style={{ transform: `translate3d(-${offset}px,0,0)` }}>
+          <div ref={reelRef} className="flex h-full items-center will-change-transform">
             {tape.map((item, index) => <div key={`${roundIndex}-${index}-${item.id}`} className="flex h-full shrink-0 items-center justify-center" style={{ width: SLOT_WIDTH }}><CardFrame item={item} size="sm" showPrice={false}/></div>)}
           </div>
         </div>
       </div>
       {complete && <div className={`absolute bottom-3 left-3 right-3 flex items-center gap-3 rounded-xl border bg-[#111318]/95 p-2.5 shadow-xl animate-banner-in ${rarityGlow}`}><CardFrame item={drop} size="xs" showPrice={false}/><div className="min-w-0"><div className="truncate text-xs font-bold text-white">{drop.name}</div><div className="text-[11px] text-slate-400">Выпало · {formatTC(drop.price)} TC</div></div></div>}
-      {isReeling && <div className="absolute bottom-2 left-3 right-3 h-1 overflow-hidden rounded-full bg-white/10"><div className="h-full bg-amber-300" style={{ width: `${reelProgress * 100}%` }}/></div>}
+      {isReeling && <div className="absolute bottom-2 left-3 right-3 h-1 overflow-hidden rounded-full bg-white/10"><div ref={progressRef} className="h-full origin-left scale-x-0 bg-amber-300 transition-none"/></div>}
     </div>
   </section>;
 };

@@ -136,8 +136,12 @@ export interface BattleRoomSummary {
   status: BattleStatus;
   hostUserId: string;
   hostUsername: string;
+  hostAvatarUrl?: string;
+  hostAvatarColor?: string;
   guestUserId: string | null;
   guestUsername: string | null;
+  guestAvatarUrl?: string;
+  guestAvatarColor?: string;
   hasPassword: boolean;
   caseId?: string;
   caseName?: string;

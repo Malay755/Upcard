@@ -4,6 +4,7 @@ import { soundFX } from './utils/sound';
 import { Header } from './components/Header';
 import { TopDropsSidebar } from './components/TopDropsSidebar';
 import { DepositModal } from './components/DepositModal';
+import { LoadingOverlay } from './components/LoadingOverlay';
 import {
   TelegramLoginModal,
   type TelegramAuthSuccessResult,
@@ -372,11 +373,7 @@ export default function App() {
   };
 
   if (loading) {
-    return (
-      <div className="min-h-screen bg-[#0B0D10] flex items-center justify-center">
-        <div className="w-10 h-10 rounded-full border-4 border-[#FACC15]/20 border-t-[#FACC15] animate-spin" />
-      </div>
-    );
+    return <LoadingOverlay label="Загрузка UPGRADER" />;
   }
 
   if (loadError || !payload) {
@@ -411,7 +408,7 @@ export default function App() {
       <div className="flex min-h-0 flex-1">
       <TopDropsSidebar liveDrops={liveDrops} items={payload.items} />
       <main className="flex-1 min-w-0 max-w-[1320px] w-full mx-auto px-4 sm:px-6 py-5">
-        <Suspense fallback={<div className="min-h-[40vh]" role="status">Загрузка раздела…</div>}>
+        <Suspense fallback={<LoadingOverlay label="Загружаем раздел" />}>
         <div key={activeTab} className="animate-tab-enter">
           {activeTab === 'upgrade' && (
             <UpgradeArena

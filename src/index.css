@@ -301,6 +301,31 @@
   to { transform: scaleX(1); }
 }
 
+@keyframes loading-dots {
+  0%, 100% { opacity: .35; transform: translateY(0); }
+  50% { opacity: 1; transform: translateY(-3px); }
+}
+
+.loading-dots { animation: loading-dots 1s ease-in-out infinite; }
+
+@keyframes winner-confetti-fall {
+  0% { opacity: 0; transform: translate3d(0, -8vh, 0) rotate(0deg); }
+  8% { opacity: 1; }
+  100% { opacity: 0; transform: translate3d(var(--confetti-drift), 110vh, 0) rotate(var(--confetti-turn)); }
+}
+
+.winner-confetti-piece {
+  position: absolute;
+  top: -10vh;
+  width: 8px;
+  height: 14px;
+  border-radius: 2px;
+  animation: winner-confetti-fall var(--confetti-time) cubic-bezier(.2,.65,.3,1) var(--confetti-delay) both;
+}
+
+.winner-backdrop { animation: modal-fade-in .35s ease-out both; }
+.winner-panel { animation: modal-panel-in .55s cubic-bezier(.22,1,.36,1) both; }
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
