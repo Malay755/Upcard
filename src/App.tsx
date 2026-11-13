@@ -1,7 +1,8 @@
-import React, { Suspense, lazy, useCallback, useEffect, useState } from 'react';
-import type { AppTab, BootstrapPayload, Rarity, RollMode } from './types';
+import React, { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
+import type { AppTab, BootstrapPayload, FriendProfile, LiveDropEntry, Rarity, RollMode } from './types';
 import { soundFX } from './utils/sound';
 import { Header } from './components/Header';
+import { TopDropsSidebar } from './components/TopDropsSidebar';
 import { DepositModal } from './components/DepositModal';
 import {
   TelegramLoginModal,
@@ -39,6 +40,9 @@ export default function App() {
   const [telegramLoginOpen, setTelegramLoginOpen] = useState(false);
   const [isAuthorized, setIsAuthorized] = useState<boolean>(false);
   const [muted, setMuted] = useState(false);
+  const [liveDrops, setLiveDrops] = useState<LiveDropEntry[]>([]);
+  const [friendInviteNotice, setFriendInviteNotice] = useState('');
+  const handledInviteCode = useRef('');
 
   const loadBootstrap = useCallback(async () => {
     try {
@@ -89,6 +93,28 @@ export default function App() {
   useEffect(() => {
     loadBootstrap();
   }, [loadBootstrap]);
+
+  useEffect(() => {
+    if (payload) setLiveDrops(payload.liveDrops);
+  }, [payload?.liveDrops]);
+
+  useEffect(() => {
+    let stopped = false;
+    const refreshDrops = async () => {
+      try {
+        const result = await apiJson<{ liveDrops: LiveDropEntry[] }>('/api/live-drops');
+        if (!stopped) setLiveDrops(result.liveDrops);
+      } catch {
+        // Keep showing the last successfully loaded feed while the network is unavailable.
+      }
+    };
+    void refreshDrops();
+    const interval = window.setInterval(refreshDrops, 10_000);
+    return () => {
+      stopped = true;
+      window.clearInterval(interval);
+    };
+  }, []);
 
   const handleToggleMute = () => {
     soundFX.muted = !muted;
@@ -204,6 +230,44 @@ export default function App() {
     return { bonus: res.bonus };
   };
 
+  const handleAddFriend = async (code: string) => {
+    const res = await apiJson<{ payload: BootstrapPayload }>('/api/friends', {
+      method: 'POST',
+      body: JSON.stringify({ code }),
+    });
+    setPayload(res.payload);
+    return res.payload;
+  };
+
+  const handleRemoveFriend = async (friendId: string) => {
+    const res = await apiJson<{ payload: BootstrapPayload }>(`/api/friends/${encodeURIComponent(friendId)}`, {
+      method: 'DELETE',
+    });
+    setPayload(res.payload);
+  };
+
+  const handleGetFriendProfile = async (friendId: string): Promise<FriendProfile> => {
+    const res = await apiJson<{ profile: FriendProfile }>(
+      `/api/friends/${encodeURIComponent(friendId)}/profile`
+    );
+    return res.profile;
+  };
+
+  useEffect(() => {
+    if (!isAuthorized || !payload) return;
+    const code = new URLSearchParams(window.location.search).get('friend')?.trim().toUpperCase();
+    if (!code || handledInviteCode.current === code) return;
+    handledInviteCode.current = code;
+    void handleAddFriend(code)
+      .then(() => setFriendInviteNotice('Приглашение принято: вы добавили друг друга в друзья.'))
+      .catch((error: unknown) => setFriendInviteNotice(error instanceof Error ? error.message : 'Не удалось принять приглашение.'))
+      .finally(() => {
+        const url = new URL(window.location.href);
+        url.searchParams.delete('friend');
+        window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+      });
+  }, [isAuthorized, payload?.user.id]);
+
   const handleCreateItem = async (data: {
     name: string;
     rarity: Rarity;
@@ -289,7 +353,9 @@ export default function App() {
         onToggleMute={handleToggleMute}
       />
 
-      <main className="flex-1 max-w-[1320px] w-full mx-auto px-4 sm:px-6 py-5">
+      <div className="flex min-h-0 flex-1">
+      <TopDropsSidebar liveDrops={liveDrops} items={payload.items} />
+      <main className="flex-1 min-w-0 max-w-[1320px] w-full mx-auto px-4 sm:px-6 py-5">
         <Suspense fallback={<div className="min-h-[40vh]" role="status">Загрузка раздела…</div>}>
         <div key={activeTab} className="animate-tab-enter">
           {activeTab === 'upgrade' && (
@@ -335,10 +401,15 @@ export default function App() {
               items={payload.items}
               transactions={payload.transactions}
               upgradeHistory={payload.upgradeHistory}
+              friends={payload.friends}
+              friendInviteNotice={friendInviteNotice}
               onOpenTelegramLogin={() => setTelegramLoginOpen(true)}
               onSellItems={handleSellItems}
               onOpenDeposit={() => setDepositOpen(true)}
               onGoToUpgrade={() => setActiveTab('upgrade')}
+              onAddFriend={handleAddFriend}
+              onRemoveFriend={handleRemoveFriend}
+              onGetFriendProfile={handleGetFriendProfile}
             />
           )}
 
@@ -355,6 +426,7 @@ export default function App() {
         </div>
         </Suspense>
       </main>
+      </div>
 
       <footer className="border-t border-white/[0.06] py-4 px-4 sm:px-6 text-xs text-slate-500">
         <div className="max-w-[1320px] mx-auto flex flex-col sm:flex-row items-center justify-between gap-2">

@@ -32,6 +32,7 @@ export interface CaseBox {
 }
 
 export type TransactionType =
+  | 'welcome_bonus'
   | 'deposit'
   | 'case_open'
   | 'item_sell'
@@ -77,6 +78,34 @@ export interface LiveDropEntry {
   createdAt: number;
 }
 
+export interface FriendSummary {
+  id: string;
+  username: string;
+  telegramUsername?: string;
+  telegramPhotoUrl?: string;
+  avatarColor: string;
+  totalUpgrades: number;
+  wonUpgrades: number;
+  totalCasesOpened: number;
+  topDropItemId: string | null;
+  topDropPrice: number;
+}
+
+export interface FriendProfile {
+  id: string;
+  username: string;
+  telegramUsername?: string;
+  telegramPhotoUrl?: string;
+  avatarColor: string;
+  totalUpgrades: number;
+  wonUpgrades: number;
+  totalCasesOpened: number;
+  topDrop: ItemCard | null;
+  topDropPrice: number;
+  inventory: { item: ItemCard; acquiredAt: number }[];
+  createdAt: number;
+}
+
 export interface UserProfile {
   id: string;
   username: string;
@@ -88,6 +117,10 @@ export interface UserProfile {
   avatarColor: string;
   balance: number;
   referralCode: string;
+  friendCode: string;
+  friends: string[];
+  topDropItemId: string | null;
+  topDropPrice: number;
   referredByCode: string | null;
   referralCount: number;
   referralEarned: number;
@@ -114,5 +147,6 @@ export interface BootstrapPayload {
   transactions: Transaction[];
   upgradeHistory: UpgradeHistoryEntry[];
   liveDrops: LiveDropEntry[];
+  friends: FriendSummary[];
   authenticated?: boolean;
 }

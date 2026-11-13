@@ -1,7 +1,9 @@
 import React, { useMemo, useState } from 'react';
-import { Coins, LayoutGrid, ShieldCheck, Wallet } from 'lucide-react';
+import { Copy, Crown, ExternalLink, Users, UserMinus, UserPlus, X, Coins, LayoutGrid, ShieldCheck, Wallet } from 'lucide-react';
 import type {
   BootstrapPayload,
+  FriendProfile,
+  FriendSummary,
   ItemCard,
   Rarity,
   TransactionType,
@@ -19,13 +21,19 @@ interface ProfileViewProps {
   items: ItemCard[];
   transactions: BootstrapPayload['transactions'];
   upgradeHistory: BootstrapPayload['upgradeHistory'];
+  friends: FriendSummary[];
+  friendInviteNotice: string;
   onOpenTelegramLogin: () => void;
   onSellItems: (instanceIds: string[]) => Promise<void>;
   onOpenDeposit: () => void;
   onGoToUpgrade: () => void;
+  onAddFriend: (code: string) => Promise<BootstrapPayload>;
+  onRemoveFriend: (friendId: string) => Promise<void>;
+  onGetFriendProfile: (friendId: string) => Promise<FriendProfile>;
 }
 
 const TX_LABELS: Record<TransactionType, string> = {
+  welcome_bonus: 'Стартовый бонус',
   deposit: 'Пополнение',
   case_open: 'Открытие кейса',
   item_sell: 'Продажа карточки',
@@ -99,12 +107,21 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   items,
   transactions,
   upgradeHistory,
+  friends,
+  friendInviteNotice,
   onOpenTelegramLogin,
   onSellItems,
   onOpenDeposit,
   onGoToUpgrade,
+  onAddFriend,
+  onRemoveFriend,
+  onGetFriendProfile,
 }) => {
   const [historyTab, setHistoryTab] = useState<'ledger' | 'upgrades'>('ledger');
+  const [friendCodeInput, setFriendCodeInput] = useState('');
+  const [friendMessage, setFriendMessage] = useState('');
+  const [friendLoading, setFriendLoading] = useState(false);
+  const [selectedFriend, setSelectedFriend] = useState<FriendProfile | null>(null);
 
   const itemsMap = useMemo(() => new Map(items.map((it) => [it.id, it])), [items]);
 
@@ -118,6 +135,8 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     () => inventoryEntries.reduce((sum, x) => sum + x.item.price, 0),
     [inventoryEntries]
   );
+  const topDrop = user.topDropItemId ? itemsMap.get(user.topDropItemId) : undefined;
+  const inviteLink = `${window.location.origin}/?friend=${encodeURIComponent(user.friendCode)}`;
 
   const winRate =
     user.totalUpgrades > 0
@@ -128,6 +147,41 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     if (inventoryEntries.length === 0) return;
     await onSellItems(inventoryEntries.map((e) => e.inv.instanceId));
     soundFX.playCoin();
+  };
+
+  const handleAddFriend = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setFriendLoading(true);
+    setFriendMessage('');
+    try {
+      await onAddFriend(friendCodeInput);
+      setFriendCodeInput('');
+      setFriendMessage('Готово! Вы добавили друг друга в друзья.');
+    } catch (error) {
+      setFriendMessage(error instanceof Error ? error.message : 'Не удалось добавить друга.');
+    } finally {
+      setFriendLoading(false);
+    }
+  };
+
+  const copyInviteLink = async () => {
+    try {
+      await navigator.clipboard.writeText(inviteLink);
+      setFriendMessage('Ссылка-приглашение скопирована.');
+    } catch {
+      setFriendMessage('Не удалось скопировать ссылку. Скопируйте её вручную из поля выше.');
+    }
+  };
+
+  const openFriendProfile = async (friendId: string) => {
+    setFriendLoading(true);
+    try {
+      setSelectedFriend(await onGetFriendProfile(friendId));
+    } catch (error) {
+      setFriendMessage(error instanceof Error ? error.message : 'Не удалось открыть профиль.');
+    } finally {
+      setFriendLoading(false);
+    }
   };
 
   // Unauthorized Telegram gate matching Upgrader inventory panel
@@ -180,7 +234,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         </h1>
       </div>
 
-      {/* Top Profile Header + 4-Column KPI Row */}
+      {/* Top Profile Header + player statistics */}
       <section
         className="border border-white/[0.06] rounded-xl p-5 sm:p-6 overflow-hidden"
         style={{
@@ -236,8 +290,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
           </div>
         </div>
 
-        {/* 4-Column KPI Row styled with top 2px accent bars */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mt-5 pt-5 border-t border-white/[0.06]">
+        <div className="grid grid-cols-2 md:grid-cols-3 2xl:grid-cols-6 gap-3 mt-5 pt-5 border-t border-white/[0.06]">
           <div className="relative overflow-hidden bg-[#0D0F12] border border-white/[0.06] rounded-xl p-4">
             <span aria-hidden="true" className="absolute top-0 inset-x-0 h-[2px] bg-[#FACC15]" />
             <div className="text-[11px] text-slate-400">Баланс</div>
@@ -272,6 +325,96 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
               {user.totalCasesOpened}
             </div>
           </div>
+          <div className="relative min-w-0 overflow-hidden bg-[#0D0F12] border border-white/[0.06] rounded-xl p-4">
+            <span aria-hidden="true" className="absolute top-0 inset-x-0 h-[2px] bg-amber-300" />
+            <div className="text-[11px] text-slate-400">Топ-дроп</div>
+            {topDrop ? (
+              <div className="mt-1 flex items-center gap-2">
+                <img src={topDrop.imageUrl} alt="" className="h-9 w-10 shrink-0 object-contain" />
+                <div className="min-w-0">
+                  <div className="truncate text-xs font-bold text-white" title={topDrop.name}>{topDrop.name}</div>
+                  <div className="text-sm font-mono-num font-bold text-amber-200">{formatTC(user.topDropPrice)} TC</div>
+                </div>
+              </div>
+            ) : (
+              <div className="mt-2 text-sm text-slate-500">Пока нет выпадений</div>
+            )}
+          </div>
+          <div className="relative overflow-hidden bg-[#0D0F12] border border-white/[0.06] rounded-xl p-4">
+            <span aria-hidden="true" className="absolute top-0 inset-x-0 h-[2px] bg-cyan-400" />
+            <div className="text-[11px] text-slate-400">Апгрейдов совершено</div>
+            <div className="text-xl font-mono-num font-bold text-white mt-1">
+              {formatTC(user.totalUpgrades)}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="grid grid-cols-1 gap-4 rounded-xl border border-white/[0.06] bg-[#14161A] p-5 xl:grid-cols-[minmax(260px,0.85fr)_1.15fr]">
+        <div className="space-y-3">
+          <div className="flex items-center gap-2">
+            <Users className="h-4 w-4 text-[#FACC15]" />
+            <h2 className="text-sm font-display font-bold text-white">Друзья ({friends.length})</h2>
+          </div>
+          <div className="space-y-2 rounded-xl border border-white/[0.06] bg-[#0D0F12] p-3">
+            <div className="text-[11px] text-slate-400">Ваш код приглашения</div>
+            <div className="flex items-center gap-2">
+              <code className="flex-1 select-all rounded-lg bg-white/[0.04] px-3 py-2 font-mono-num text-sm font-bold tracking-wider text-amber-200">
+                {user.friendCode}
+              </code>
+              <button type="button" onClick={copyInviteLink} className="inline-flex items-center gap-1.5 rounded-lg bg-amber-400 px-3 py-2 text-xs font-bold text-slate-950 transition-colors hover:bg-amber-300">
+                <Copy className="h-3.5 w-3.5" /> Ссылка
+              </button>
+            </div>
+            <label className="block text-[11px] text-slate-500" htmlFor="friend-invite-link">Ссылка-приглашение</label>
+            <input id="friend-invite-link" readOnly value={inviteLink} onFocus={(event) => event.currentTarget.select()} className="w-full rounded-lg border border-white/[0.06] bg-black/20 px-3 py-2 text-[11px] text-slate-300" />
+          </div>
+          <form onSubmit={handleAddFriend} className="flex gap-2">
+            <input
+              value={friendCodeInput}
+              onChange={(event) => setFriendCodeInput(event.target.value.toUpperCase())}
+              placeholder="Введите код друга"
+              aria-label="Код друга"
+              maxLength={40}
+              className="min-w-0 flex-1 rounded-lg border border-white/10 bg-[#0D0F12] px-3 py-2 text-xs text-white outline-none focus:border-amber-300/50"
+            />
+            <button disabled={friendLoading || !friendCodeInput.trim()} className="inline-flex items-center gap-1 rounded-lg border border-white/10 bg-white/[0.06] px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40">
+              <UserPlus className="h-3.5 w-3.5" /> Добавить
+            </button>
+          </form>
+          {(friendMessage || friendInviteNotice) && <p role="status" className="text-[11px] text-amber-200">{friendMessage || friendInviteNotice}</p>}
+        </div>
+
+        <div className="min-w-0 space-y-2">
+          <div className="text-[11px] text-slate-400">Ваш список друзей</div>
+          {friends.length === 0 ? (
+            <div className="flex min-h-24 items-center justify-center rounded-xl border border-dashed border-white/10 px-4 text-center text-xs text-slate-500">
+              Здесь появятся друзья после добавления по коду или ссылке.
+            </div>
+          ) : (
+            <ul className="grid max-h-64 grid-cols-1 gap-2 overflow-y-auto sm:grid-cols-2">
+              {friends.map((friend) => {
+                const friendTopDrop = friend.topDropItemId ? itemsMap.get(friend.topDropItemId) : undefined;
+                return (
+                  <li key={friend.id} className="flex min-w-0 items-center gap-2 rounded-xl border border-white/[0.06] bg-[#0D0F12] p-2.5">
+                    {friend.telegramPhotoUrl ? (
+                      <img src={friend.telegramPhotoUrl} alt="" className="h-9 w-9 shrink-0 rounded-full object-cover" />
+                    ) : (
+                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold text-slate-950" style={{ backgroundColor: friend.avatarColor }}>{friend.username.slice(0, 2).toUpperCase()}</span>
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-xs font-semibold text-white">{friend.telegramUsername ? `@${friend.telegramUsername}` : friend.username}</div>
+                      <div className="truncate text-[10px] text-slate-500">
+                        {friendTopDrop ? `Топ-дроп: ${friendTopDrop.name} · ${formatTC(friend.topDropPrice)} TC` : `${formatTC(friend.totalUpgrades)} апгрейдов`}
+                      </div>
+                    </div>
+                    <button type="button" disabled={friendLoading} onClick={() => void openFriendProfile(friend.id)} title="Профиль друга" aria-label={`Открыть профиль ${friend.username}`} className="rounded-md p-1.5 text-slate-400 hover:bg-amber-300/10 hover:text-amber-200 disabled:opacity-40"><ExternalLink className="h-3.5 w-3.5" /></button>
+                    <button type="button" onClick={() => void onRemoveFriend(friend.id).then(() => setFriendMessage('Друг удалён из списка.')).catch((error: unknown) => setFriendMessage(error instanceof Error ? error.message : 'Не удалось удалить друга.'))} title="Удалить из друзей" aria-label={`Удалить ${friend.username} из друзей`} className="rounded-md p-1.5 text-slate-500 hover:bg-rose-400/10 hover:text-rose-300"><UserMinus className="h-3.5 w-3.5" /></button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
         </div>
       </section>
 
@@ -485,6 +628,60 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
           </div>
         )}
       </section>
+
+      {selectedFriend && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm" role="presentation">
+          <section role="dialog" aria-modal="true" aria-labelledby="friend-profile-title" className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-white/10 bg-[#14161A] p-5 shadow-2xl">
+            <div className="mb-5 flex items-center justify-between gap-3">
+              <div className="flex min-w-0 items-center gap-3">
+                {selectedFriend.telegramPhotoUrl ? (
+                  <img src={selectedFriend.telegramPhotoUrl} alt="" className="h-12 w-12 rounded-full object-cover" />
+                ) : (
+                  <span className="flex h-12 w-12 items-center justify-center rounded-full font-bold text-slate-950" style={{ backgroundColor: selectedFriend.avatarColor }}>{selectedFriend.username.slice(0, 2).toUpperCase()}</span>
+                )}
+                <div className="min-w-0">
+                  <h2 id="friend-profile-title" className="truncate text-lg font-bold text-white">{selectedFriend.username}</h2>
+                  {selectedFriend.telegramUsername && <p className="truncate text-xs text-sky-300">@{selectedFriend.telegramUsername}</p>}
+                </div>
+              </div>
+              <button type="button" onClick={() => setSelectedFriend(null)} aria-label="Закрыть профиль друга" className="rounded-lg p-2 text-slate-400 hover:bg-white/10 hover:text-white"><X className="h-5 w-5" /></button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              <div className="rounded-lg bg-black/20 p-3"><div className="text-[10px] text-slate-500">Апгрейдов</div><div className="mt-1 font-mono-num font-bold text-white">{formatTC(selectedFriend.totalUpgrades)}</div></div>
+              <div className="rounded-lg bg-black/20 p-3"><div className="text-[10px] text-slate-500">Побед</div><div className="mt-1 font-mono-num font-bold text-emerald-300">{formatTC(selectedFriend.wonUpgrades)}</div></div>
+              <div className="rounded-lg bg-black/20 p-3"><div className="text-[10px] text-slate-500">Кейсов открыто</div><div className="mt-1 font-mono-num font-bold text-white">{formatTC(selectedFriend.totalCasesOpened)}</div></div>
+              <div className="rounded-lg bg-black/20 p-3"><div className="text-[10px] text-slate-500">В инвентаре</div><div className="mt-1 font-mono-num font-bold text-white">{selectedFriend.inventory.length}</div></div>
+            </div>
+
+            <div className="mt-4 rounded-xl border border-amber-300/15 bg-amber-300/[0.04] p-4">
+              <div className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-amber-200"><Crown className="h-4 w-4" />Топ-дроп</div>
+              {selectedFriend.topDrop ? (
+                <div className="flex items-center gap-3">
+                  <img src={selectedFriend.topDrop.imageUrl} alt="" className="h-14 w-16 object-contain" />
+                  <div><div className="font-semibold text-white">{selectedFriend.topDrop.name}</div><div className="text-sm font-mono-num text-amber-200">{formatTC(selectedFriend.topDropPrice)} TC · {RARITY_LABELS[selectedFriend.topDrop.rarity]}</div></div>
+                </div>
+              ) : <p className="text-xs text-slate-500">Пока нет выпавших карточек.</p>}
+            </div>
+
+            <div className="mt-5">
+              <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">Инвентарь друга</h3>
+              {selectedFriend.inventory.length === 0 ? (
+                <p className="rounded-xl border border-dashed border-white/10 py-8 text-center text-xs text-slate-500">Инвентарь пуст.</p>
+              ) : (
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                  {selectedFriend.inventory.map((entry, index) => (
+                    <article key={`${entry.item.id}-${entry.acquiredAt}-${index}`} className="flex min-w-0 items-center gap-2 rounded-xl border border-white/[0.06] bg-black/20 p-2">
+                      <img src={entry.item.imageUrl} alt="" className="h-10 w-12 shrink-0 object-contain" />
+                      <div className="min-w-0"><div className="truncate text-[11px] font-semibold text-white">{entry.item.name}</div><div className="text-[10px] text-slate-400">{formatTC(entry.item.price)} TC</div></div>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 };

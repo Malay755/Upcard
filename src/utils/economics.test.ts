@@ -10,7 +10,7 @@ import {
 } from './economics';
 import type { ItemCard } from '../types';
 
-test('calculateUpgradeOdds computes fair 95% RTP odds and clamps bounds', () => {
+test('calculateUpgradeOdds keeps the 95% RTP formula at every chance', () => {
   const even = calculateUpgradeOdds(500, 1000, 'under');
   assert.equal(even.winChance, 47.5);
   assert.equal(even.multiplier, 2);
@@ -22,13 +22,13 @@ test('calculateUpgradeOdds computes fair 95% RTP odds and clamps bounds', () => 
   assert.equal(over.minRoll, 52.5);
   assert.equal(over.maxRoll, 100);
 
-  // Clamped upper bound at 85%
+  // High chances are not capped because a cap would alter RTP.
   const high = calculateUpgradeOdds(950, 1000, 'under');
-  assert.equal(high.winChance, 85);
+  assert.equal(high.winChance, 90.25);
 
-  // Clamped lower bound at 1%
+  // Long-shot chances are not raised to 1%.
   const longshot = calculateUpgradeOdds(10, 50000, 'under');
-  assert.equal(longshot.winChance, 1);
+  assert.equal(longshot.winChance, 0.019);
 
   // Invalid when stake >= target
   const invalid = calculateUpgradeOdds(1000, 900, 'under');

@@ -1,7 +1,12 @@
 import React, { useState } from 'react';
 import { CheckCircle2, Gift, Plus, Sparkles, Trash2, Upload } from 'lucide-react';
 import type { CaseBox, ItemCard, Rarity } from '../types';
-import { formatTC, RARITY_LABELS } from '../utils/economics';
+import {
+  calculateCaseExpectedValue,
+  formatTC,
+  recommendedCasePrice,
+  RARITY_LABELS,
+} from '../utils/economics';
 import { soundFX } from '../utils/sound';
 import { CardFrame } from './CardFrame';
 import { LegendaryRevealModal } from './LegendaryRevealModal';
@@ -33,14 +38,23 @@ const RARITY_OPTIONS: {
   id: Rarity;
   label: string;
   suggestedPrice: number;
+  minPrice: number;
+  maxPrice: number;
   dotColor: string;
   activeBorder: string;
 }[] = [
-  { id: 'common', label: 'Обычная (Серая)', suggestedPrice: 180, dotColor: 'bg-slate-400', activeBorder: 'border-slate-400 bg-slate-400/15 text-white' },
-  { id: 'rare', label: 'Редкая (Зеленая)', suggestedPrice: 480, dotColor: 'bg-emerald-400', activeBorder: 'border-emerald-400 bg-emerald-500/15 text-emerald-200' },
-  { id: 'epic', label: 'Эпическая (Фиолетовая)', suggestedPrice: 2100, dotColor: 'bg-purple-400', activeBorder: 'border-purple-400 bg-purple-500/15 text-purple-200' },
-  { id: 'legendary', label: 'Легендарная (Золотая)', suggestedPrice: 8500, dotColor: 'bg-[#FACC15]', activeBorder: 'border-[#FACC15] bg-[#FACC15]/15 text-[#FEF08A]' },
+  { id: 'common', label: 'Обычная (Серая)', minPrice: 50, maxPrice: 299, suggestedPrice: 180, dotColor: 'bg-slate-400', activeBorder: 'border-slate-400 bg-slate-400/15 text-white' },
+  { id: 'rare', label: 'Редкая (Зеленая)', minPrice: 300, maxPrice: 999, suggestedPrice: 480, dotColor: 'bg-emerald-400', activeBorder: 'border-emerald-400 bg-emerald-500/15 text-emerald-200' },
+  { id: 'epic', label: 'Эпическая (Фиолетовая)', minPrice: 1000, maxPrice: 4999, suggestedPrice: 2100, dotColor: 'bg-purple-400', activeBorder: 'border-purple-400 bg-purple-500/15 text-purple-200' },
+  { id: 'legendary', label: 'Легендарная (Золотая)', minPrice: 5000, maxPrice: 250000, suggestedPrice: 8500, dotColor: 'bg-[#FACC15]', activeBorder: 'border-[#FACC15] bg-[#FACC15]/15 text-[#FEF08A]' },
 ];
+
+const CASE_WEIGHTS_BY_TIER: Record<Rarity, Record<Rarity, number>> = {
+  common: { common: 65, rare: 25, epic: 8, legendary: 2 },
+  rare: { common: 15, rare: 60, epic: 20, legendary: 5 },
+  epic: { common: 5, rare: 30, epic: 55, legendary: 10 },
+  legendary: { common: 0, rare: 18, epic: 47, legendary: 35 },
+};
 
 export const AdminView: React.FC<AdminViewProps> = ({
   items,
@@ -67,6 +81,10 @@ export const AdminView: React.FC<AdminViewProps> = ({
   const [caseItemIds, setCaseItemIds] = useState<string[]>([]);
   const [caseMsg, setCaseMsg] = useState('');
   const [caseErr, setCaseErr] = useState('');
+  const selectedCaseItems = items.filter((item) => caseItemIds.includes(item.id));
+  const minimumCasePrice = recommendedCasePrice(
+    calculateCaseExpectedValue({ rarityWeights: CASE_WEIGHTS_BY_TIER[caseTier] }, selectedCaseItems)
+  );
 
   const handleFileUpload = (file: File | undefined) => {
     if (!file) return;
@@ -124,25 +142,22 @@ export const AdminView: React.FC<AdminViewProps> = ({
     e.preventDefault();
     setCaseErr('');
     setCaseMsg('');
-    const weightsByTier: Record<Rarity, Record<Rarity, number>> = {
-      common: { common: 65, rare: 25, epic: 8, legendary: 2 },
-      rare: { common: 15, rare: 60, epic: 20, legendary: 5 },
-      epic: { common: 5, rare: 30, epic: 55, legendary: 10 },
-      legendary: { common: 0, rare: 18, epic: 47, legendary: 35 },
-    };
-
     try {
+      const minimumFairPrice = recommendedCasePrice(
+        calculateCaseExpectedValue({ rarityWeights: CASE_WEIGHTS_BY_TIER[caseTier] }, selectedCaseItems)
+      );
+      const finalCasePrice = Math.max(casePrice, minimumFairPrice);
       await onCreateCase({
         name: caseName,
         description: `Авторский кейс (${RARITY_LABELS[caseTier]})`,
-        price: casePrice,
+        price: finalCasePrice,
         tier: caseTier,
         imageUrl: '/src/assets/images/case_legend_crate_1794514881507.jpg',
         itemIds: caseItemIds,
-        rarityWeights: weightsByTier[caseTier],
+        rarityWeights: CASE_WEIGHTS_BY_TIER[caseTier],
       });
       soundFX.playCoin();
-      setCaseMsg(`Кейс «${caseName}» создан!`);
+      setCaseMsg(`Кейс «${caseName}» создан за ${formatTC(finalCasePrice)} TC. Цена согласована с шансами дропа.`);
       setCaseName('');
       setCaseItemIds([]);
     } catch (err) {
@@ -282,7 +297,8 @@ export const AdminView: React.FC<AdminViewProps> = ({
               <input
                 id="admin-item-price"
                 type="number"
-                min={10}
+                min={RARITY_OPTIONS.find((option) => option.id === rarity)?.minPrice}
+                max={RARITY_OPTIONS.find((option) => option.id === rarity)?.maxPrice}
                 value={price}
                 onChange={(e) => setPrice(Number(e.target.value))}
                 className="w-full px-4 py-2.5 rounded-xl bg-[#0D0F12] border border-white/10 text-sm text-white font-mono-num focus:outline-none focus:border-[#FACC15]"
@@ -437,6 +453,11 @@ export const AdminView: React.FC<AdminViewProps> = ({
                 onChange={(e) => setCasePrice(Number(e.target.value))}
                 className="w-full px-3.5 py-2.5 rounded-xl bg-[#0D0F12] border border-white/10 text-sm text-white font-mono-num focus:outline-none focus:border-[#FACC15]"
               />
+              {minimumCasePrice > 0 && (
+                <p className="mt-1 text-[11px] text-slate-500">
+                  Минимум по таблице дропа: {formatTC(minimumCasePrice)} TC
+                </p>
+              )}
             </div>
 
             <div>

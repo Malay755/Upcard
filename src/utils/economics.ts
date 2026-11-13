@@ -1,6 +1,7 @@
 import type { CaseBox, ItemCard, Rarity, RollMode } from '../types';
 
-export const HOUSE_EDGE = 0.05; // 5% transparent platform margin (95% RTP)
+export const HOUSE_EDGE = 0.05; // 5% upgrade margin (95% theoretical RTP)
+export const CASE_RTP = 0.75; // Cases return 75% of their cost on average before variance.
 
 export const RARITY_ORDER: Record<Rarity, number> = {
   common: 1,
@@ -25,7 +26,7 @@ export const PROMO_CODES: Record<string, { bonusRate: number; label: string }> =
 export const DAILY_STREAK_REWARDS = [150, 220, 320, 450, 650, 850, 1200];
 
 export interface UpgradeOdds {
-  winChance: number; // 1.00 .. 85.00 (%)
+  winChance: number; // 0 .. below 95 (%)
   multiplier: number; // targetPrice / stakeTotal
   minRoll: number;
   maxRoll: number;
@@ -34,7 +35,7 @@ export interface UpgradeOdds {
 /**
  * Computes upgrade win chance, multiplier, and winning roll range.
  * Classic CS upgrader math: winChance = (stakeTotal / targetPrice) * (1 - HOUSE_EDGE) * 100
- * Clamped to [1, 85]% to ensure fair bounds.
+ * Never clamps the chance: clamping changes the advertised return rate at the extremes.
  */
 export function calculateUpgradeOdds(
   stakeTotal: number,
@@ -52,7 +53,7 @@ export function calculateUpgradeOdds(
   }
 
   const rawChance = (stakeTotal / targetPrice) * (1 - houseEdge) * 100;
-  const winChance = Number(Math.min(85, Math.max(1, rawChance)).toFixed(2));
+  const winChance = Number(rawChance.toFixed(6));
   const multiplier = Number((targetPrice / stakeTotal).toFixed(2));
 
   if (mode === 'under') {
@@ -94,9 +95,9 @@ export interface CaseDropProbability {
 }
 
 /**
- * Calculates exact normalized drop percentages for every item in a case.
- * Combines the case's rarity weight pool with inverse-price weighting within each rarity tier
- * so higher-tier items inside a rarity still scale fairly with case odds.
+ * Normalizes rarity weights and distributes each rarity's share among its items.
+ * Inverse-square-root pricing gives cheaper items more weight without making expensive
+ * items within one rarity effectively impossible.
  */
 export function calculateCaseDropProbabilities(
   caseBox: Pick<CaseBox, 'rarityWeights'>,
@@ -148,13 +149,38 @@ export function calculateCaseDropProbabilities(
     }));
   }
 
-  return rawWeights
+  const result = rawWeights
     .map(({ item, weight }) => ({
       item,
       weight,
       probability: Number(((weight / totalWeight) * 100).toFixed(2)),
     }))
     .sort((a, b) => a.item.price - b.item.price);
+  const roundedTotal = result.reduce((sum, entry) => sum + entry.probability, 0);
+  const largestEntry = result.reduce((best, entry, index, entries) =>
+    entry.probability > entries[best].probability ? index : best, 0);
+  result[largestEntry].probability = Number((result[largestEntry].probability + 100 - roundedTotal).toFixed(2));
+  return result;
+}
+
+/** Expected card value for one case opening, in TC. */
+export function calculateCaseExpectedValue(
+  caseBox: Pick<CaseBox, 'rarityWeights'>,
+  caseItems: ItemCard[]
+): number {
+  const probabilities = calculateCaseDropProbabilities(caseBox, caseItems);
+  const totalWeight = probabilities.reduce((sum, entry) => sum + entry.weight, 0);
+  return totalWeight > 0
+    ? probabilities.reduce((sum, entry) => sum + entry.item.price * entry.weight, 0) / totalWeight
+    : 0;
+}
+
+/** Recommended whole-TC price at the chosen case RTP, rounded up to 50 TC. */
+export function recommendedCasePrice(expectedValue: number, rtp = CASE_RTP): number {
+  if (!Number.isFinite(expectedValue) || expectedValue <= 0 || !Number.isFinite(rtp) || rtp <= 0 || rtp >= 1) {
+    return 0;
+  }
+  return Math.ceil((expectedValue / rtp) / 50) * 50;
 }
 
 /**
