@@ -125,6 +125,7 @@ export interface BattleInvitationSummary {
   roomId: string;
   fromUsername: string;
   mode: BattleMode;
+  caseId?: string;
   caseCount?: number;
   createdAt: number;
 }

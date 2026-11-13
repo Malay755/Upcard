@@ -803,7 +803,10 @@ function publicBattle(room: PersistedBattleRoom, viewerUserId?: string): BattleR
     hostWinChance: isParticipant ? room.hostWinChance : undefined,
     rollValue: isParticipant ? room.rollValue : undefined,
     roundResults: isParticipant ? room.roundResults : undefined,
-    rewardInventoryIds: isParticipant ? room.awardedInventoryIdsByUser?.[viewerUserId!] : undefined,
+    rewardInventoryIds: isParticipant
+      ? room.awardedInventoryIdsByUser?.[viewerUserId!]
+        ?? (viewerUserId === room.winnerUserId ? room.awardedInventoryIds : undefined)
+      : undefined,
     hostItems: isParticipant ? room.hostItems : undefined,
     guestItems: isParticipant ? room.guestItems : undefined,
   };
@@ -963,6 +966,7 @@ function buildPayload(userId?: string, authenticated = Boolean(userId)): Bootstr
           roomId: invite.roomId,
           fromUsername: db.users.find((candidate) => candidate.id === invite.fromUserId)?.username ?? 'Игрок',
           mode: db.battles.find((battle) => battle.id === invite.roomId)?.mode ?? 'upgrade',
+          caseId: db.battles.find((battle) => battle.id === invite.roomId)?.caseId,
           caseCount: db.battles.find((battle) => battle.id === invite.roomId)?.caseCount,
           createdAt: invite.createdAt,
         }))
@@ -1501,7 +1505,7 @@ async function startServer() {
     room.awardedInventoryIds = awarded.map((entry) => entry.instanceId);
     room.awardedInventoryIdsByUser = awardedByUser;
     room.startedAt = Date.now();
-    room.durationMs = (room.mode === 'cases' ? (room.caseCount ?? 1) * 900 : 6000);
+    room.durationMs = (room.mode === 'cases' ? (room.caseCount ?? 1) * 5400 : 4200);
     room.status = 'completed';
     for (const invite of db.battleInvitations) {
       if (invite.roomId === room.id && invite.status === 'pending') {
@@ -1515,7 +1519,7 @@ async function startServer() {
     }
     sendRealtimeToBattle(room, { type: 'battle_started', roomId: room.id, startedAt: room.startedAt });
     room.roundResults?.forEach((round, index) => {
-      setTimeout(() => sendRealtimeToBattle(room, { type: 'battle_round', roomId: room.id, round: index + 1, payload: round }), (index + 1) * 900);
+      setTimeout(() => sendRealtimeToBattle(room, { type: 'battle_round', roomId: room.id, round: index + 1, payload: round }), (index + 1) * 5400);
     });
     setTimeout(() => sendRealtimeToBattle(room, { type: 'battle_finished', roomId: room.id, winnerUserId: room.winnerUserId }), room.durationMs);
   };
@@ -1552,7 +1556,7 @@ async function startServer() {
   app.get('/api/battles/current', (req, res) => {
     const user = authenticatedUser(req, res); if (!user) return;
     const room = db.battles.find((entry) => (entry.hostUserId === user.id || entry.guestUserId === user.id)
-      && (entry.status === 'waiting' || (entry.status === 'completed' && Date.now() - (entry.startedAt ?? 0) < 120_000)));
+      && (entry.status === 'waiting' || (entry.status === 'completed' && Date.now() - (entry.startedAt ?? 0) < (entry.durationMs ?? 0) + 60_000)));
     res.json({ battle: room ? publicBattle(room, user.id) : null });
   });
 
@@ -1579,7 +1583,7 @@ async function startServer() {
       recordTx(user, 'battle_stake', 0, 'Карточки поставлены в батл', `${entries.length} карточек · ${value} TC по каталогу`);
     }
     db.battles.unshift(room); saveDb();
-    res.json({ battle: publicBattle(room, user.id) });
+    res.json({ payload: buildPayload(user.id), battle: publicBattle(room, user.id) });
   });
 
   app.get('/api/battles/:id', (req, res) => {
