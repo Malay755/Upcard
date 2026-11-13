@@ -669,7 +669,7 @@ export const UpgradeArena: React.FC<UpgradeArenaProps> = ({
         )}
 
       {/* Centered Hero UPGRADER Title matching Reference 1 */}
-      <div className="flex items-center justify-center gap-2 pt-1">
+      <div className="motion-hero flex items-center justify-center gap-2 pt-1">
         <svg viewBox="0 0 24 24" className="w-6 h-6 text-[#FACC15]" fill="currentColor" aria-hidden="true">
           <path d="M12 4L4 11.5L6.2 13.7L12 8.2L17.8 13.7L20 11.5L12 4Z" />
           <path d="M12 10.5L4 18L6.2 20.2L12 14.7L17.8 20.2L20 18L12 10.5Z" opacity="0.6" />

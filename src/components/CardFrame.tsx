@@ -87,9 +87,11 @@ export const CardFrame: React.FC<CardFrameProps> = ({
           <img
             src={displayUrl}
             alt={item.name}
+            loading="lazy"
+            decoding="async"
             referrerPolicy="no-referrer"
             draggable={false}
-            className={`w-full h-full object-contain transition-opacity duration-150 ${
+            className={`w-full h-full object-contain transition-[opacity,transform] duration-500 ease-out group-hover:scale-[1.03] ${
               ready ? 'opacity-100' : 'opacity-0'
             }`}
           />

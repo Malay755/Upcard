@@ -84,7 +84,7 @@ export interface UserProfile {
   telegramUsername?: string;
   telegramFirstName?: string;
   telegramPhotoUrl?: string;
-  authProvider?: 'telegram_widget' | 'telegram_bot' | 'telegram_webapp' | 'preview';
+  authProvider?: 'telegram_widget' | 'telegram_webapp';
   avatarColor: string;
   balance: number;
   referralCode: string;
@@ -104,7 +104,6 @@ export interface UserProfile {
 export interface TelegramAuthConfig {
   botConfigured: boolean;
   botUsername: string | null;
-  webhookPath: string;
 }
 
 export interface BootstrapPayload {

@@ -22,6 +22,8 @@ export const CaseThumbnail3D: React.FC<CaseThumbnail3DProps> = ({ caseBox, class
     <img
       src={thumbUrl ?? resolveAssetUrl(caseBox.imageUrl)}
       alt={caseBox.name}
+      loading="lazy"
+      decoding="async"
       referrerPolicy="no-referrer"
       className={className}
     />

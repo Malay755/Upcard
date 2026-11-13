@@ -1,40 +1,25 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { Suspense, lazy, useCallback, useEffect, useState } from 'react';
 import type { AppTab, BootstrapPayload, Rarity, RollMode } from './types';
 import { soundFX } from './utils/sound';
 import { Header } from './components/Header';
-import { UpgradeArena } from './components/UpgradeArena';
-import { CasesView } from './components/CasesView';
-import { BonusesView } from './components/BonusesView';
-import { ProfileView } from './components/ProfileView';
-import { AdminView } from './components/AdminView';
 import { DepositModal } from './components/DepositModal';
 import {
   TelegramLoginModal,
   type TelegramAuthSuccessResult,
 } from './components/TelegramLoginModal';
 
-const STORAGE_USER_KEY = 'cardup_active_user_id';
-const STORAGE_TOKEN_KEY = 'cardup_tg_session_token';
-
-function getStoredToken(): string {
-  try {
-    return localStorage.getItem(STORAGE_TOKEN_KEY) ?? '';
-  } catch {
-    return '';
-  }
-}
+const UpgradeArena = lazy(() => import('./components/UpgradeArena').then((m) => ({ default: m.UpgradeArena })));
+const CasesView = lazy(() => import('./components/CasesView').then((m) => ({ default: m.CasesView })));
+const BonusesView = lazy(() => import('./components/BonusesView').then((m) => ({ default: m.BonusesView })));
+const ProfileView = lazy(() => import('./components/ProfileView').then((m) => ({ default: m.ProfileView })));
+const AdminView = lazy(() => import('./components/AdminView').then((m) => ({ default: m.AdminView })));
 
 async function apiJson<T>(url: string, options?: RequestInit): Promise<T> {
-  const token = getStoredToken();
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-  };
   const res = await fetch(url, {
     credentials: 'include',
     ...options,
     headers: {
-      ...headers,
+      'Content-Type': 'application/json',
       ...(options?.headers as Record<string, string> | undefined),
     },
   });
@@ -55,14 +40,22 @@ export default function App() {
   const [isAuthorized, setIsAuthorized] = useState<boolean>(false);
   const [muted, setMuted] = useState(false);
 
-  const loadBootstrap = useCallback(async (userId?: string) => {
+  const loadBootstrap = useCallback(async () => {
     try {
       // Auto-authenticate when opened inside a Telegram Bot Mini App (Telegram.WebApp.initData)
       const win = window as unknown as {
         Telegram?: { WebApp?: { initData?: string; ready?: () => void } };
       };
       const tgInitData = win.Telegram?.WebApp?.initData;
-      if (tgInitData && !getStoredToken()) {
+      const current = await apiJson<BootstrapPayload>('/api/bootstrap');
+      if (current.authenticated) {
+        setPayload(current);
+        setIsAuthorized(true);
+        setLoadError('');
+        return;
+      }
+
+      if (tgInitData) {
         try {
           win.Telegram?.WebApp?.ready?.();
           const webAppRes = await fetch('/api/auth/telegram/verify-webapp', {
@@ -73,8 +66,6 @@ export default function App() {
           });
           if (webAppRes.ok) {
             const authData = (await webAppRes.json()) as TelegramAuthSuccessResult;
-            localStorage.setItem(STORAGE_TOKEN_KEY, authData.sessionToken);
-            localStorage.setItem(STORAGE_USER_KEY, authData.payload.user.id);
             setPayload(authData.payload);
             setIsAuthorized(true);
             setLoadError('');
@@ -85,12 +76,8 @@ export default function App() {
         }
       }
 
-      const targetId = userId ?? localStorage.getItem(STORAGE_USER_KEY) ?? '';
-      const query = targetId ? `?userId=${encodeURIComponent(targetId)}` : '';
-      const data = await apiJson<BootstrapPayload>(`/api/bootstrap${query}`);
-      localStorage.setItem(STORAGE_USER_KEY, data.user.id);
-      setPayload(data);
-      setIsAuthorized(Boolean(data.authenticated));
+      setPayload(current);
+      setIsAuthorized(false);
       setLoadError('');
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : 'Не удалось загрузить данные.');
@@ -109,8 +96,6 @@ export default function App() {
   };
 
   const handleTelegramAuthenticated = (result: TelegramAuthSuccessResult) => {
-    localStorage.setItem(STORAGE_TOKEN_KEY, result.sessionToken);
-    localStorage.setItem(STORAGE_USER_KEY, result.payload.user.id);
     setPayload(result.payload);
     setIsAuthorized(true);
     soundFX.playCoin();
@@ -122,8 +107,8 @@ export default function App() {
     } catch {
       // Clear local session regardless
     }
-    localStorage.removeItem(STORAGE_TOKEN_KEY);
     setIsAuthorized(false);
+    await loadBootstrap();
   };
 
   const handleDeposit = async (amount: number, method: string, promoCode: string) => {
@@ -140,7 +125,7 @@ export default function App() {
       };
     }>('/api/finance/deposit', {
       method: 'POST',
-      body: JSON.stringify({ userId: payload.user.id, amount, method, promoCode }),
+      body: JSON.stringify({ amount, method, promoCode }),
     });
     setPayload(res.payload);
     return res.receipt;
@@ -162,7 +147,7 @@ export default function App() {
       };
     }>('/api/upgrade/roll', {
       method: 'POST',
-      body: JSON.stringify({ userId: payload.user.id, ...params }),
+      body: JSON.stringify(params),
     });
     return {
       ...res.result,
@@ -174,7 +159,7 @@ export default function App() {
     if (!payload) return;
     const res = await apiJson<{ payload: BootstrapPayload }>('/api/inventory/sell', {
       method: 'POST',
-      body: JSON.stringify({ userId: payload.user.id, instanceIds }),
+      body: JSON.stringify({ instanceIds }),
     });
     setPayload(res.payload);
   };
@@ -189,7 +174,7 @@ export default function App() {
       };
     }>('/api/cases/open', {
       method: 'POST',
-      body: JSON.stringify({ userId: payload.user.id, caseId }),
+      body: JSON.stringify({ caseId }),
     });
     setPayload(res.payload);
     return res.drop;
@@ -203,7 +188,7 @@ export default function App() {
       streakDay: number;
     }>('/api/bonus/daily', {
       method: 'POST',
-      body: JSON.stringify({ userId: payload.user.id }),
+      body: JSON.stringify({}),
     });
     setPayload(res.payload);
     return { reward: res.reward, streakDay: res.streakDay };
@@ -213,28 +198,10 @@ export default function App() {
     if (!payload) throw new Error('Пользователь не загружен.');
     const res = await apiJson<{ payload: BootstrapPayload; bonus: number }>('/api/referral/apply', {
       method: 'POST',
-      body: JSON.stringify({ userId: payload.user.id, code }),
+      body: JSON.stringify({ code }),
     });
     setPayload(res.payload);
     return { bonus: res.bonus };
-  };
-
-  const handleSwitchUser = (userId: string) => {
-    localStorage.setItem(STORAGE_USER_KEY, userId);
-    loadBootstrap(userId);
-  };
-
-  const handleRegisterUser = async (username: string, referralCode?: string) => {
-    const data = await apiJson<BootstrapPayload & { sessionToken?: string }>('/api/auth/register', {
-      method: 'POST',
-      body: JSON.stringify({ username, referralCode }),
-    });
-    if (data.sessionToken) {
-      localStorage.setItem(STORAGE_TOKEN_KEY, data.sessionToken);
-    }
-    localStorage.setItem(STORAGE_USER_KEY, data.user.id);
-    setIsAuthorized(true);
-    setPayload(data);
   };
 
   const handleCreateItem = async (data: {
@@ -258,14 +225,14 @@ export default function App() {
 
   const handleDeleteItem = async (id: string) => {
     await apiJson(`/api/admin/items/${encodeURIComponent(id)}`, { method: 'DELETE' });
-    await loadBootstrap(payload?.user.id);
+    await loadBootstrap();
   };
 
   const handleGrantItem = async (itemId: string) => {
     if (!payload) return;
     const res = await apiJson<{ payload: BootstrapPayload }>('/api/admin/grant', {
       method: 'POST',
-      body: JSON.stringify({ userId: payload.user.id, itemId }),
+      body: JSON.stringify({ itemId }),
     });
     setPayload(res.payload);
   };
@@ -323,6 +290,7 @@ export default function App() {
       />
 
       <main className="flex-1 max-w-[1320px] w-full mx-auto px-4 sm:px-6 py-5">
+        <Suspense fallback={<div className="min-h-[40vh]" role="status">Загрузка раздела…</div>}>
         <div key={activeTab} className="animate-tab-enter">
           {activeTab === 'upgrade' && (
             <UpgradeArena
@@ -361,16 +329,13 @@ export default function App() {
           )}
 
           {activeTab === 'profile' && (
-            <ProfileView
+        <ProfileView
               user={payload.user}
               isAuthorized={isAuthorized}
-              users={payload.users}
               items={payload.items}
               transactions={payload.transactions}
               upgradeHistory={payload.upgradeHistory}
               onOpenTelegramLogin={() => setTelegramLoginOpen(true)}
-              onSwitchUser={handleSwitchUser}
-              onRegisterUser={handleRegisterUser}
               onSellItems={handleSellItems}
               onOpenDeposit={() => setDepositOpen(true)}
               onGoToUpgrade={() => setActiveTab('upgrade')}
@@ -388,6 +353,7 @@ export default function App() {
             />
           )}
         </div>
+        </Suspense>
       </main>
 
       <footer className="border-t border-white/[0.06] py-4 px-4 sm:px-6 text-xs text-slate-500">

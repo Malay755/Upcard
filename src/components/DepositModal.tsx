@@ -75,12 +75,12 @@ export const DepositModal: React.FC<DepositModalProps> = ({ isOpen, onClose, onD
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4 animate-modal-backdrop"
       role="dialog"
       aria-modal="true"
       aria-labelledby="deposit-modal-title"
     >
-      <div className="w-full max-w-xl bg-[#14161A] border border-white/10 rounded-2xl shadow-2xl overflow-hidden">
+      <div className="w-full max-w-xl bg-[#14161A] border border-white/10 rounded-2xl shadow-2xl overflow-hidden animate-modal-panel">
         <div className="flex items-center justify-between px-6 py-4 border-b border-white/[0.08]">
           <div>
             <h2 id="deposit-modal-title" className="text-lg font-display font-bold text-white">

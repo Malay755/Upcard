@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { LogOut, Volume2, VolumeX } from 'lucide-react';
 import type { AppTab, UserProfile } from '../types';
 import { TelegramPaperPlaneIcon } from './TelegramLoginModal';
@@ -32,8 +32,17 @@ export const Header: React.FC<HeaderProps> = ({
   muted,
   onToggleMute,
 }) => {
+  const [scrolled, setScrolled] = useState(false);
+
+  useEffect(() => {
+    const updateScrolled = () => setScrolled(window.scrollY > 12);
+    updateScrolled();
+    window.addEventListener('scroll', updateScrolled, { passive: true });
+    return () => window.removeEventListener('scroll', updateScrolled);
+  }, []);
+
   return (
-    <header className="sticky top-0 z-40 bg-[#0D0F12]/95 backdrop-blur-md border-b border-white/[0.06]">
+    <header className={`sticky top-0 z-40 border-b border-white/[0.06] backdrop-blur-md transition-[background-color,box-shadow] duration-300 ${scrolled ? 'bg-[#0D0F12]/95 shadow-lg shadow-black/20' : 'bg-[#0D0F12]/80'}`}>
       <div className="max-w-[1320px] mx-auto w-full px-4 sm:px-6 h-14 flex items-center justify-between gap-4">
         {/* Left Zone: ^^ UPGRADER Brand */}
         <div className="flex items-center min-w-0">
@@ -67,7 +76,7 @@ export const Header: React.FC<HeaderProps> = ({
               >
                 {item.label}
                 {isActive && (
-                  <span className="absolute inset-x-0 -bottom-[11px] h-[2px] bg-[#FACC15] shadow-[0_0_8px_rgba(250,204,21,0.8)] rounded-full" />
+                  <span className="nav-underline absolute inset-x-0 -bottom-[11px] h-[2px] bg-[#FACC15] shadow-[0_0_8px_rgba(250,204,21,0.8)] rounded-full" />
                 )}
               </button>
             );

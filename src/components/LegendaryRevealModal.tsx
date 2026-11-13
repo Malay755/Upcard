@@ -105,7 +105,7 @@ export const LegendaryRevealModal: React.FC<LegendaryRevealModalProps> = ({
       {/* Warm Central Glow */}
       <div className="absolute w-96 h-96 rounded-full bg-amber-400/25 blur-3xl pointer-events-none animate-legendary-glow" />
 
-      <div className="relative z-10 flex flex-col items-center text-center max-w-md w-full space-y-6">
+      <div className="relative z-10 flex flex-col items-center text-center max-w-md w-full space-y-6 animate-modal-panel">
         {/* Title Fade In */}
         <div className="space-y-1 animate-legendary-title">
           <div className="inline-flex items-center gap-1.5 text-xs font-bold tracking-[0.18em] uppercase text-[#FACC15]">

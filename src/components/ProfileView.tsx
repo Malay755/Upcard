@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Bot, Coins, LayoutGrid, PlusCircle, ShieldCheck, UserCheck, Wallet } from 'lucide-react';
+import { Coins, LayoutGrid, ShieldCheck, Wallet } from 'lucide-react';
 import type {
   BootstrapPayload,
   ItemCard,
@@ -16,13 +16,10 @@ import { TelegramPaperPlaneIcon } from './TelegramLoginModal';
 interface ProfileViewProps {
   user: UserProfile;
   isAuthorized: boolean;
-  users: BootstrapPayload['users'];
   items: ItemCard[];
   transactions: BootstrapPayload['transactions'];
   upgradeHistory: BootstrapPayload['upgradeHistory'];
   onOpenTelegramLogin: () => void;
-  onSwitchUser: (userId: string) => void;
-  onRegisterUser: (username: string, referralCode?: string) => Promise<void>;
   onSellItems: (instanceIds: string[]) => Promise<void>;
   onOpenDeposit: () => void;
   onGoToUpgrade: () => void;
@@ -99,20 +96,14 @@ const ProfileInventoryTile: React.FC<{
 export const ProfileView: React.FC<ProfileViewProps> = ({
   user,
   isAuthorized,
-  users,
   items,
   transactions,
   upgradeHistory,
   onOpenTelegramLogin,
-  onSwitchUser,
-  onRegisterUser,
   onSellItems,
   onOpenDeposit,
   onGoToUpgrade,
 }) => {
-  const [newUsername, setNewUsername] = useState('');
-  const [newRefCode, setNewRefCode] = useState('');
-  const [regError, setRegError] = useState('');
   const [historyTab, setHistoryTab] = useState<'ledger' | 'upgrades'>('ledger');
 
   const itemsMap = useMemo(() => new Map(items.map((it) => [it.id, it])), [items]);
@@ -132,19 +123,6 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     user.totalUpgrades > 0
       ? ((user.wonUpgrades / user.totalUpgrades) * 100).toFixed(1)
       : '0.0';
-
-  const handleRegister = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setRegError('');
-    try {
-      await onRegisterUser(newUsername, newRefCode);
-      setNewUsername('');
-      setNewRefCode('');
-      soundFX.playCoin();
-    } catch (err) {
-      setRegError(err instanceof Error ? err.message : 'Ошибка создания аккаунта.');
-    }
-  };
 
   const handleSellAll = async () => {
     if (inventoryEntries.length === 0) return;
@@ -247,22 +225,6 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5">
-            <label htmlFor="account-switcher" className="text-xs text-slate-400">
-              Аккаунт:
-            </label>
-            <select
-              id="account-switcher"
-              value={user.id}
-              onChange={(e) => onSwitchUser(e.target.value)}
-              className="px-3 py-2 rounded-lg bg-[#0D0F12] border border-white/[0.08] text-xs text-white focus:outline-none focus:border-[#FACC15] cursor-pointer"
-            >
-              {users.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.telegramUsername ? `@${u.telegramUsername}` : u.username} ({formatTC(u.balance)} TC)
-                </option>
-              ))}
-            </select>
-
             <button
               type="button"
               onClick={onOpenDeposit}
@@ -367,18 +329,18 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
           )}
         </section>
 
-        {/* Right Column: Telegram Bot Sync Status & Create Account */}
+        {/* Right Column: verified Telegram account status */}
         <section className="lg:col-span-4 space-y-5">
           <div className="bg-[#14161A] border border-white/[0.06] rounded-xl p-5 space-y-3">
             <div className="flex items-center gap-2">
-              <Bot className="w-4 h-4 text-[#2AABEE]" />
-              <h2 className="text-sm font-display font-bold text-white">Связь с Telegram-ботом</h2>
+              <ShieldCheck className="w-4 h-4 text-[#2AABEE]" />
+              <h2 className="text-sm font-display font-bold text-white">Авторизация аккаунта</h2>
             </div>
             <div className="bg-[#0D0F12] border border-white/[0.06] rounded-lg p-3 space-y-1.5 text-xs">
               <div className="flex items-center justify-between">
                 <span className="text-slate-400">Статус:</span>
                 <span className="inline-flex items-center gap-1 text-emerald-400 font-semibold">
-                  <ShieldCheck className="w-3.5 h-3.5" /> Привязан
+                  <ShieldCheck className="w-3.5 h-3.5" /> Подтверждён Telegram
                 </span>
               </div>
               <div className="flex items-center justify-between">
@@ -391,58 +353,8 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
               </div>
             </div>
             <p className="text-[11px] text-slate-400 leading-relaxed">
-              Единый Telegram ID синхронизирует ваш баланс и инвентарь между сайтом, Mini App и командами бота (`/balance`, `/inventory`).
+              Сайт получает Telegram ID из проверенных Telegram данных. Никнейм и имя в форме не используются для входа.
             </p>
-          </div>
-
-          <div className="bg-[#14161A] border border-white/[0.06] rounded-xl p-5 space-y-3.5">
-            <div className="flex items-center gap-2">
-              <UserCheck className="w-4 h-4 text-[#FACC15]" />
-              <h2 className="text-sm font-display font-bold text-white">Новый профиль</h2>
-            </div>
-            <p className="text-[11px] text-slate-400">
-              Код <span className="font-mono-num text-slate-200">{user.referralCode}</span> даёт другу +300 TC, а вам +150 TC.
-            </p>
-
-            <form onSubmit={handleRegister} className="space-y-3">
-              <div>
-                <label htmlFor="new-username" className="block text-[11px] text-slate-300 mb-1">
-                  Никнейм
-                </label>
-                <input
-                  id="new-username"
-                  type="text"
-                  value={newUsername}
-                  onChange={(e) => setNewUsername(e.target.value)}
-                  placeholder="Например, VanyaPro"
-                  className="w-full px-3 py-2 rounded-lg bg-[#0D0F12] border border-white/[0.08] text-xs text-white focus:outline-none focus:border-[#FACC15]"
-                />
-              </div>
-
-              <div>
-                <label htmlFor="new-ref-code" className="block text-[11px] text-slate-300 mb-1">
-                  Реферальный код
-                </label>
-                <input
-                  id="new-ref-code"
-                  type="text"
-                  value={newRefCode}
-                  onChange={(e) => setNewRefCode(e.target.value)}
-                  placeholder={user.referralCode}
-                  className="w-full px-3 py-2 rounded-lg bg-[#0D0F12] border border-white/[0.08] text-xs text-white uppercase font-mono-num focus:outline-none focus:border-[#FACC15]"
-                />
-              </div>
-
-              {regError && <p className="text-xs text-rose-400">{regError}</p>}
-
-              <button
-                type="submit"
-                className="w-full py-2.5 px-4 rounded-xl bg-[#0D0F12] hover:bg-white/[0.08] border border-white/[0.08] text-white font-display font-bold text-xs transition-colors cursor-pointer flex items-center justify-center gap-2"
-              >
-                <PlusCircle className="w-3.5 h-3.5 text-[#FACC15]" />
-                <span>Создать и войти</span>
-              </button>
-            </form>
           </div>
         </section>
       </div>

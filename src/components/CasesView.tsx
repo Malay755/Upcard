@@ -15,6 +15,7 @@ import { useCleanCardImage } from '../utils/cardCutout';
 import { calculateCaseDropProbabilities, formatTC, RARITY_LABELS } from '../utils/economics';
 import { soundFX } from '../utils/sound';
 import { CardFrame } from './CardFrame';
+import { ScrollReveal } from './ScrollReveal';
 import { CaseStage3D } from './CaseStage3D';
 import { CaseThumbnail3D } from './CaseThumbnail3D';
 import { LegendaryRevealModal } from './LegendaryRevealModal';
@@ -104,6 +105,8 @@ const CompactDropItemTile: React.FC<{ item: ItemCard; probability: number }> = (
           <img
             src={displayUrl}
             alt={item.name}
+            loading="lazy"
+            decoding="async"
             referrerPolicy="no-referrer"
             draggable={false}
             className="max-h-[84px] w-auto object-contain drop-shadow-[0_6px_12px_rgba(0,0,0,0.75)]"
@@ -417,12 +420,11 @@ export const CasesView: React.FC<CasesViewProps> = ({
               {officialCases.map((caseBox, idx) => {
                 const tileStyle = RARITY_TILE_ACCENT[caseBox.tier] ?? RARITY_TILE_ACCENT.rare;
                 return (
+                  <ScrollReveal key={caseBox.id} delayMs={idx * 35} className="h-full">
                   <button
-                    key={caseBox.id}
                     type="button"
                     onClick={() => setActiveCaseId(caseBox.id)}
-                    style={{ animationDelay: `${idx * 30}ms` }}
-                    className={`animate-banner-in group relative rounded-xl overflow-hidden border border-white/[0.06] hover:border-[#FACC15]/55 text-left transition-all duration-150 hover:-translate-y-0.5 cursor-pointer p-3 flex flex-col justify-between h-[210px] bg-gradient-to-b ${tileStyle.glow} via-[#181B22] to-[#121419]`}
+                    className={`group relative rounded-xl overflow-hidden border border-white/[0.06] hover:border-[#FACC15]/55 text-left transition-[transform,box-shadow,border-color] duration-300 ease-out hover:-translate-y-1 hover:shadow-xl cursor-pointer p-3 flex flex-col justify-between h-[210px] bg-gradient-to-b ${tileStyle.glow} via-[#181B22] to-[#121419] motion-press`}
                   >
                     <span aria-hidden="true" className={`absolute top-0 inset-x-0 h-[2px] ${tileStyle.bar}`} />
 
@@ -441,7 +443,7 @@ export const CasesView: React.FC<CasesViewProps> = ({
                     <div className="relative flex-1 flex items-center justify-center my-1 min-h-0">
                       <CaseThumbnail3D
                         caseBox={caseBox}
-                        className="relative w-full h-full object-contain drop-shadow-[0_10px_16px_rgba(0,0,0,0.75)] transition-transform duration-200 group-hover:scale-105"
+                        className="relative w-full h-full object-contain drop-shadow-[0_10px_16px_rgba(0,0,0,0.75)] transition-transform duration-500 ease-out group-hover:scale-[1.03]"
                       />
                     </div>
 
@@ -452,6 +454,7 @@ export const CasesView: React.FC<CasesViewProps> = ({
                       </div>
                     </div>
                   </button>
+                  </ScrollReveal>
                 );
               })}
             </div>
@@ -485,12 +488,11 @@ export const CasesView: React.FC<CasesViewProps> = ({
                 const tileStyle = RARITY_TILE_ACCENT[caseBox.tier] ?? RARITY_TILE_ACCENT.rare;
                 const risk = RISK_LABEL_BY_TIER[caseBox.tier] ?? RISK_LABEL_BY_TIER.rare;
                 return (
+                  <ScrollReveal key={`author-${caseBox.id}`} delayMs={idx * 35} className="h-full">
                   <button
-                    key={`author-${caseBox.id}`}
                     type="button"
                     onClick={() => setActiveCaseId(caseBox.id)}
-                    style={{ animationDelay: `${idx * 30}ms` }}
-                    className={`animate-banner-in group relative rounded-xl overflow-hidden border border-white/[0.06] hover:border-[#FACC15]/55 text-left transition-all duration-150 hover:-translate-y-0.5 cursor-pointer p-3 flex flex-col justify-between h-[210px] bg-gradient-to-b ${tileStyle.glow} via-[#181B22] to-[#121419]`}
+                    className={`group relative rounded-xl overflow-hidden border border-white/[0.06] hover:border-[#FACC15]/55 text-left transition-[transform,box-shadow,border-color] duration-300 ease-out hover:-translate-y-1 hover:shadow-xl cursor-pointer p-3 flex flex-col justify-between h-[210px] bg-gradient-to-b ${tileStyle.glow} via-[#181B22] to-[#121419] motion-press`}
                   >
                     <span aria-hidden="true" className={`absolute top-0 inset-x-0 h-[2px] ${tileStyle.bar}`} />
 
@@ -509,7 +511,7 @@ export const CasesView: React.FC<CasesViewProps> = ({
                     <div className="relative flex-1 flex items-center justify-center my-1 min-h-0">
                       <CaseThumbnail3D
                         caseBox={caseBox}
-                        className="relative w-full h-full object-contain drop-shadow-[0_10px_16px_rgba(0,0,0,0.75)] transition-transform duration-200 group-hover:scale-105"
+                        className="relative w-full h-full object-contain drop-shadow-[0_10px_16px_rgba(0,0,0,0.75)] transition-transform duration-500 ease-out group-hover:scale-[1.03]"
                       />
                     </div>
 
@@ -520,6 +522,7 @@ export const CasesView: React.FC<CasesViewProps> = ({
                       </div>
                     </div>
                   </button>
+                  </ScrollReveal>
                 );
               })}
             </div>

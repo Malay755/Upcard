@@ -2,6 +2,7 @@ import express from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import 'dotenv/config';
 import { createServer as createViteServer } from 'vite';
 import type {
   BootstrapPayload,
@@ -24,20 +25,10 @@ import {
   resolveUpgradeRoll,
 } from './src/utils/economics.ts';
 
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 const DATA_DIR = path.resolve(process.cwd(), 'data');
 const DB_PATH = path.join(DATA_DIR, 'db.json');
 const UPLOADS_DIR = path.resolve(process.cwd(), 'public', 'uploads');
-
-interface PendingTelegramSession {
-  sessionId: string;
-  code: string;
-  status: 'pending' | 'verified' | 'expired';
-  userId?: string;
-  sessionToken?: string;
-  expiresAt: number;
-  createdAt: number;
-}
 
 interface DatabaseSchema {
   items: ItemCard[];
@@ -48,10 +39,28 @@ interface DatabaseSchema {
   liveDrops: LiveDropEntry[];
   sessionSecret?: string;
   revokedTokens?: string[];
+  authVersion?: number;
 }
 
 function uid(prefix: string): string {
   return `${prefix}_${crypto.randomBytes(5).toString('hex')}`;
+}
+
+const consumedTelegramHashes = new Map<string, number>();
+
+function consumeTelegramHash(hash: string): boolean {
+  const now = Date.now();
+  for (const [value, expiresAt] of consumedTelegramHashes) {
+    if (expiresAt <= now) consumedTelegramHashes.delete(value);
+  }
+  if (consumedTelegramHashes.has(hash)) return false;
+  while (consumedTelegramHashes.size >= 5000) {
+    const oldest = consumedTelegramHashes.keys().next().value;
+    if (!oldest) break;
+    consumedTelegramHashes.delete(oldest);
+  }
+  consumedTelegramHashes.set(hash, now + 10 * 60 * 1000);
+  return true;
 }
 
 function createInitialDb(): DatabaseSchema {
@@ -281,7 +290,6 @@ function createInitialDb(): DatabaseSchema {
     telegramId: '700100201',
     telegramUsername: 'playerone_tg',
     telegramFirstName: 'PlayerOne',
-    authProvider: 'preview',
     avatarColor: '#F59E0B',
     balance: 1500,
     referralCode: 'CARDUP-P177',
@@ -411,6 +419,17 @@ function saveDb() {
   fs.renameSync(tmpPath, DB_PATH);
 }
 
+// Invalidate any sessions minted by the old demo username/register endpoints.
+if (db.authVersion !== 2) {
+  db.sessionSecret = crypto.randomBytes(32).toString('hex');
+  db.revokedTokens = [];
+  db.authVersion = 2;
+  for (const user of db.users) {
+    if ((user.authProvider as string | undefined) === 'preview') delete user.authProvider;
+  }
+  saveDb();
+}
+
 function getUser(userId?: string): UserProfile {
   if (userId) {
     const found = db.users.find((u) => u.id === userId);
@@ -502,11 +521,38 @@ function verifySessionToken(token?: string | null): string | null {
   }
 }
 
-function extractBearerOrCookieToken(req: express.Request): string | null {
-  const authHeader = req.headers.authorization;
-  if (authHeader && authHeader.startsWith('Bearer ')) {
-    return authHeader.slice(7).trim();
+function authenticatedUser(req: express.Request, res: express.Response): UserProfile | null {
+  const userId = verifySessionToken(extractSessionCookie(req));
+  const user = userId ? db.users.find((candidate) => candidate.id === userId) : undefined;
+  if (!user) {
+    res.status(401).json({ error: 'Войдите через Telegram, чтобы продолжить.' });
+    return null;
   }
+  return user;
+}
+
+function adminUser(req: express.Request, res: express.Response): UserProfile | null {
+  const user = authenticatedUser(req, res);
+  if (!user) return null;
+  const adminIds = (process.env.TELEGRAM_ADMIN_IDS ?? '').split(',').map((id) => id.trim()).filter(Boolean);
+  if (!user.telegramId || !adminIds.includes(user.telegramId)) {
+    res.status(403).json({ error: 'Недостаточно прав.' });
+    return null;
+  }
+  return user;
+}
+
+function setSessionCookie(res: express.Response, token: string) {
+  res.cookie('cardup_tg_session', token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    path: '/',
+    maxAge: 1000 * 60 * 60 * 24 * 30,
+  });
+}
+
+function extractSessionCookie(req: express.Request): string | null {
   const cookieHeader = req.headers.cookie;
   if (cookieHeader) {
     for (const part of cookieHeader.split(';')) {
@@ -520,20 +566,37 @@ function extractBearerOrCookieToken(req: express.Request): string | null {
 }
 
 function buildPayload(userId?: string, authenticated = false): BootstrapPayload {
-  const user = getUser(userId);
+  const user = authenticated && userId ? getUser(userId) : {
+    id: 'guest',
+    username: 'Гость',
+    avatarColor: '#2AABEE',
+    balance: 0,
+    referralCode: '',
+    referredByCode: null,
+    referralCount: 0,
+    referralEarned: 0,
+    dailyStreak: 0,
+    lastDailyClaimAt: null,
+    totalDeposited: 0,
+    totalUpgrades: 0,
+    wonUpgrades: 0,
+    totalCasesOpened: 0,
+    inventory: [],
+    createdAt: Date.now(),
+  } satisfies UserProfile;
   return {
     user,
-    users: db.users.map((u) => ({
-      id: u.id,
-      username: u.username,
-      telegramUsername: u.telegramUsername,
-      balance: u.balance,
-      referralCode: u.referralCode,
-    })),
+    users: authenticated ? [{
+      id: user.id,
+      username: user.username,
+      telegramUsername: user.telegramUsername,
+      balance: user.balance,
+      referralCode: user.referralCode,
+    }] : [],
     items: db.items,
     cases: db.cases,
-    transactions: db.transactions.filter((t) => t.userId === user.id).slice(0, 60),
-    upgradeHistory: db.upgradeHistory.filter((h) => h.userId === user.id).slice(0, 40),
+    transactions: authenticated ? db.transactions.filter((t) => t.userId === user.id).slice(0, 60) : [],
+    upgradeHistory: authenticated ? db.upgradeHistory.filter((h) => h.userId === user.id).slice(0, 40) : [],
     liveDrops: db.liveDrops.slice(0, 14),
     authenticated,
   };
@@ -549,7 +612,7 @@ function verifyTelegramLoginWidget(
     return { valid: false, reason: 'Отсутствует подпись или дата авторизации Telegram.' };
   }
   const ageSec = Math.floor(Date.now() / 1000) - authDate;
-  if (ageSec > 86400) {
+  if (ageSec > 600 || ageSec < -60) {
     return { valid: false, reason: 'Срок действия подписи Telegram истёк.' };
   }
 
@@ -586,7 +649,8 @@ function verifyTelegramWebAppInitData(
     const params = new URLSearchParams(initData);
     const hash = params.get('hash') ?? '';
     const authDate = Number(params.get('auth_date') ?? 0);
-    if (!hash || !Number.isFinite(authDate) || Math.floor(Date.now() / 1000) - authDate > 86400) {
+    const ageSec = Math.floor(Date.now() / 1000) - authDate;
+    if (!hash || !Number.isFinite(authDate) || ageSec > 600 || ageSec < -60) {
       return { valid: false, reason: 'Некорректные или устаревшие данные Telegram Mini App.' };
     }
 
@@ -614,6 +678,9 @@ function verifyTelegramWebAppInitData(
       first_name?: string;
       photo_url?: string;
     };
+    if (!Number.isSafeInteger(parsedUser.id) || parsedUser.id <= 0) {
+      return { valid: false, reason: 'Некорректный Telegram user ID.' };
+    }
     return { valid: true, user: parsedUser };
   } catch {
     return { valid: false, reason: 'Ошибка разбора Telegram initData.' };
@@ -632,12 +699,8 @@ function upsertTelegramUser(params: {
   const cleanDisplay = (params.firstName ?? cleanHandle ?? `TG_${tgId ?? 'User'}`).trim().slice(0, 24);
   const normalizedHandle = cleanHandle.toLowerCase();
 
-  let user = db.users.find(
-    (u) =>
-      (tgId && u.telegramId === tgId) ||
-      (normalizedHandle && u.telegramUsername?.toLowerCase() === normalizedHandle) ||
-      (normalizedHandle && u.username.toLowerCase() === normalizedHandle)
-  );
+  // Telegram numeric ID is the identity. Usernames can change or be recycled.
+  let user = tgId ? db.users.find((candidate) => candidate.telegramId === tgId) : undefined;
 
   if (!user) {
     const palette = ['#2AABEE', '#F59E0B', '#10B981', '#A855F7', '#EC4899'];
@@ -695,8 +758,6 @@ function saveDataUrlImageIfNeeded(imageUrl: string): string {
   return `/uploads/${filename}`;
 }
 
-const pendingTgSessions = new Map<string, PendingTelegramSession>();
-
 async function startServer() {
   const app = express();
   app.use(express.json({ limit: '10mb' }));
@@ -723,178 +784,27 @@ async function startServer() {
     }
   }
 
-  const sendBotReply = async (chatId: number | string, text: string, replyMarkup?: unknown) => {
-    if (!telegramBotToken) return;
-    try {
-      await fetch(`https://api.telegram.org/bot${telegramBotToken}/sendMessage`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: chatId,
-          text,
-          parse_mode: 'HTML',
-          reply_markup: replyMarkup,
-        }),
-      });
-    } catch {
-      // Ignore outbound message errors
-    }
-  };
-
-  const processTelegramBotUpdate = async (update: {
-    message?: {
-      text?: string;
-      chat?: { id: number };
-      from?: { id: number; username?: string; first_name?: string };
-    };
-  }) => {
-    const msg = update.message;
-    if (!msg?.from || !msg.chat) return { handled: false };
-    const text = (msg.text ?? '').trim();
-    const fromId = String(msg.from.id);
-    const fromUsername = msg.from.username;
-    const fromFirstName = msg.from.first_name ?? msg.from.username ?? 'Player';
-    const appUrl = (process.env.APP_URL || '').trim();
-
-    // 1. Deep-link login: /start auth_<sessionId> or /auth <code>
-    const startMatch = text.match(/^\/start\s+auth_([a-zA-Z0-9_-]+)/i);
-    const codeMatch = text.match(/^\/auth\s+([a-zA-Z0-9_-]+)/i);
-    const matchedTokenOrCode = startMatch?.[1] || codeMatch?.[1];
-
-    if (matchedTokenOrCode) {
-      let pending = pendingTgSessions.get(matchedTokenOrCode);
-      if (!pending) {
-        for (const s of pendingTgSessions.values()) {
-          if (s.code.toUpperCase() === matchedTokenOrCode.toUpperCase()) {
-            pending = s;
-            break;
-          }
-        }
-      }
-
-      if (!pending || pending.expiresAt < Date.now()) {
-        await sendBotReply(
-          msg.chat.id,
-          '⏳ Код авторизации истёк или не найден. Откройте сайт и нажмите «Войти через Telegram» заново.'
-        );
-        return { handled: true, status: 'expired' };
-      }
-
-      const user = upsertTelegramUser({
-        telegramId: fromId,
-        username: fromUsername,
-        firstName: fromFirstName,
-        provider: 'telegram_bot',
-      });
-      const token = issueSessionToken(user.id);
-      pending.status = 'verified';
-      pending.userId = user.id;
-      pending.sessionToken = token;
-
-      await sendBotReply(
-        msg.chat.id,
-        `✅ <b>Вы успешно авторизованы в UPGRADER!</b>\n\n👤 Аккаунт: <b>${user.username}</b>${user.telegramUsername ? ` (@${user.telegramUsername})` : ''}\n🪙 Баланс: <b>${user.balance} TC</b>\n🎴 Карт в инвентаре: <b>${user.inventory.length}</b>\n\nМожете вернуться в браузер — вход выполнен автоматически.`,
-        appUrl
-          ? {
-              inline_keyboard: [[{ text: 'Открыть UPGRADER', url: appUrl }]],
-            }
-          : undefined
-      );
-
-      return { handled: true, status: 'verified', userId: user.id };
-    }
-
-    // 2. General Bot Commands (/start, /profile, /balance, /inventory)
-    const user = upsertTelegramUser({
-      telegramId: fromId,
-      username: fromUsername,
-      firstName: fromFirstName,
-      provider: 'telegram_bot',
-    });
-
-    if (text.startsWith('/inventory')) {
-      const invLines = user.inventory.slice(0, 10).map((inv) => {
-        const it = db.items.find((x) => x.id === inv.itemId);
-        return it ? `• <b>${it.name}</b> (${it.price} TC)` : `• ${inv.itemId}`;
-      });
-      await sendBotReply(
-        msg.chat.id,
-        `🎒 <b>Ваш инвентарь (${user.inventory.length}):</b>\n${invLines.length ? invLines.join('\n') : 'Пусто'}`
-      );
-      return { handled: true, command: 'inventory' };
-    }
-
-    if (text.startsWith('/start') || text.startsWith('/profile') || text.startsWith('/balance')) {
-      await sendBotReply(
-        msg.chat.id,
-        `⚡ <b>UPGRADER Профиль</b>\n\n👤 Игрок: <b>${user.username}</b>\n🆔 Telegram ID: <code>${fromId}</code>\n🪙 Баланс: <b>${user.balance} TC</b>\n🎴 Инвентарь: <b>${user.inventory.length} карт</b>\n🎯 Апгрейдов выиграно: <b>${user.wonUpgrades}/${user.totalUpgrades}</b>\n🔗 Реф. код: <code>${user.referralCode}</code>`,
-        appUrl
-          ? {
-              inline_keyboard: [[{ text: 'Открыть UPGRADER', web_app: { url: appUrl } }]],
-            }
-          : undefined
-      );
-      return { handled: true, command: 'profile' };
-    }
-
-    return { handled: false };
-  };
-
-  // Optional live Telegram Bot long-polling if TELEGRAM_BOT_TOKEN is configured and polling is enabled
-  if (telegramBotToken && process.env.TELEGRAM_POLLING !== 'false') {
-    let offset = 0;
-    const pollTelegram = async () => {
-      try {
-        const res = await fetch(
-          `https://api.telegram.org/bot${telegramBotToken}/getUpdates?timeout=20&offset=${offset}`
-        );
-        const data = (await res.json()) as {
-          ok?: boolean;
-          result?: Array<{ update_id: number; message?: any }>;
-        };
-        if (data.ok && Array.isArray(data.result)) {
-          for (const upd of data.result) {
-            offset = Math.max(offset, upd.update_id + 1);
-            await processTelegramBotUpdate(upd);
-          }
-        }
-      } catch {
-        // Back off quietly if offline or webhook mode is active
-      } finally {
-        setTimeout(pollTelegram, 2000);
-      }
-    };
-    setTimeout(pollTelegram, 1500);
-  }
-
   app.get('/api/bootstrap', (req, res) => {
-    const token = extractBearerOrCookieToken(req);
-    const sessionUid = verifySessionToken(token);
-    const queryUid = typeof req.query.userId === 'string' ? req.query.userId : undefined;
-    const targetUid = sessionUid || queryUid;
-    res.json(buildPayload(targetUid, Boolean(sessionUid)));
+    const sessionUid = verifySessionToken(extractSessionCookie(req));
+    const authenticated = Boolean(sessionUid && db.users.some((user) => user.id === sessionUid));
+    res.json(buildPayload(authenticated ? sessionUid! : undefined, authenticated));
   });
 
   app.get('/api/auth/telegram/config', (_req, res) => {
     res.json({
-      botConfigured: Boolean(telegramBotToken),
+      botConfigured: Boolean(telegramBotToken && telegramBotUsername),
       botUsername: telegramBotUsername || null,
-      webhookPath: '/api/telegram/webhook',
     });
   });
 
   app.get('/api/auth/me', (req, res) => {
-    const token = extractBearerOrCookieToken(req);
-    const uidFromToken = verifySessionToken(token);
-    if (!uidFromToken) {
-      res.status(401).json({ authenticated: false });
-      return;
-    }
-    res.json({ authenticated: true, payload: buildPayload(uidFromToken, true) });
+    const user = authenticatedUser(req, res);
+    if (!user) return;
+    res.json({ authenticated: true, payload: buildPayload(user.id, true) });
   });
 
   app.post('/api/auth/logout', (req, res) => {
-    const token = extractBearerOrCookieToken(req);
+    const token = extractSessionCookie(req);
     if (token) {
       db.revokedTokens = db.revokedTokens ?? [];
       if (!db.revokedTokens.includes(token)) {
@@ -903,7 +813,7 @@ async function startServer() {
         saveDb();
       }
     }
-    res.clearCookie('cardup_tg_session');
+    res.clearCookie('cardup_tg_session', { path: '/' });
     res.json({ ok: true });
   });
 
@@ -918,8 +828,12 @@ async function startServer() {
 
     const body = req.body as Record<string, unknown>;
     const check = verifyTelegramLoginWidget(body, telegramBotToken);
-    if (!check.valid) {
+    if (!check.valid || typeof body.id !== 'number' || !Number.isSafeInteger(body.id) || body.id <= 0) {
       res.status(401).json({ error: check.reason || 'Ошибка проверки подписи Telegram.' });
+      return;
+    }
+    if (!consumeTelegramHash(String(body.hash))) {
+      res.status(401).json({ error: 'Эти данные Telegram уже были использованы. Начните вход заново.' });
       return;
     }
 
@@ -932,12 +846,8 @@ async function startServer() {
     });
 
     const sessionToken = issueSessionToken(user.id);
-    res.cookie('cardup_tg_session', sessionToken, {
-      httpOnly: true,
-      sameSite: 'lax',
-      maxAge: 1000 * 60 * 60 * 24 * 30,
-    });
-    res.json({ payload: buildPayload(user.id, true), sessionToken });
+    setSessionCookie(res, sessionToken);
+    res.json({ payload: buildPayload(user.id, true) });
   });
 
   // 2. Official Telegram Mini App (WebApp.initData) cryptographic verification
@@ -958,6 +868,11 @@ async function startServer() {
       res.status(401).json({ error: check.reason || 'Неверные данные Mini App.' });
       return;
     }
+    const initHash = new URLSearchParams(initData).get('hash') ?? '';
+    if (!consumeTelegramHash(initHash)) {
+      res.status(401).json({ error: 'Эти данные Telegram уже были использованы. Перезапустите приложение.' });
+      return;
+    }
 
     const user = upsertTelegramUser({
       telegramId: String(check.user.id),
@@ -968,183 +883,14 @@ async function startServer() {
     });
 
     const sessionToken = issueSessionToken(user.id);
-    res.cookie('cardup_tg_session', sessionToken, {
-      httpOnly: true,
-      sameSite: 'lax',
-      maxAge: 1000 * 60 * 60 * 24 * 30,
-    });
-    res.json({ payload: buildPayload(user.id, true), sessionToken });
-  });
-
-  // 3. Telegram Bot Deep-Link Auth Session (https://t.me/<bot>?start=auth_<sessionId>)
-  app.post('/api/auth/telegram/init-session', (_req, res) => {
-    const now = Date.now();
-    for (const [k, v] of pendingTgSessions.entries()) {
-      if (v.expiresAt < now) pendingTgSessions.delete(k);
-    }
-    const sessionId = crypto.randomBytes(12).toString('hex');
-    const code = crypto.randomBytes(3).toString('hex').toUpperCase();
-    const expiresAt = now + 10 * 60 * 1000;
-    pendingTgSessions.set(sessionId, {
-      sessionId,
-      code,
-      status: 'pending',
-      expiresAt,
-      createdAt: now,
-    });
-
-    res.json({
-      sessionId,
-      code,
-      expiresAt,
-      botConfigured: Boolean(telegramBotToken),
-      botUsername: telegramBotUsername || null,
-      deepLink: telegramBotUsername
-        ? `https://t.me/${telegramBotUsername}?start=auth_${sessionId}`
-        : null,
-    });
-  });
-
-  app.get('/api/auth/telegram/session/:sessionId', (req, res) => {
-    const session = pendingTgSessions.get(req.params.sessionId);
-    if (!session || session.expiresAt < Date.now()) {
-      if (session) pendingTgSessions.delete(req.params.sessionId);
-      res.json({ status: 'expired' });
-      return;
-    }
-
-    if (session.status === 'verified' && session.userId && session.sessionToken) {
-      res.cookie('cardup_tg_session', session.sessionToken, {
-        httpOnly: true,
-        sameSite: 'lax',
-        maxAge: 1000 * 60 * 60 * 24 * 30,
-      });
-      res.json({
-        status: 'verified',
-        sessionToken: session.sessionToken,
-        payload: buildPayload(session.userId, true),
-      });
-      pendingTgSessions.delete(req.params.sessionId);
-      return;
-    }
-
-    res.json({ status: 'pending', expiresAt: session.expiresAt });
-  });
-
-  // Official Telegram Bot Webhook endpoint (set via setWebhook -> https://<APP_URL>/api/telegram/webhook)
-  app.post('/api/telegram/webhook', async (req, res) => {
-    const secretHeader = req.headers['x-telegram-bot-api-secret-token'];
-    const expectedSecret = process.env.TELEGRAM_WEBHOOK_SECRET;
-    if (expectedSecret && secretHeader !== expectedSecret) {
-      res.status(403).json({ error: 'Invalid Telegram webhook secret.' });
-      return;
-    }
-    const result = await processTelegramBotUpdate(req.body ?? {});
-    res.json({ ok: true, ...result });
-  });
-
-  // Preview-mode Telegram auth (only active when TELEGRAM_BOT_TOKEN is not yet configured in environment)
-  app.post('/api/auth/telegram', (req, res) => {
-    if (telegramBotToken) {
-      res.status(403).json({
-        error: 'Используйте официальный виджет или вход через Telegram-бота (TELEGRAM_BOT_TOKEN активен).',
-      });
-      return;
-    }
-
-    const { telegramId, username, firstName, photoUrl } = req.body as {
-      telegramId?: string;
-      username?: string;
-      firstName?: string;
-      photoUrl?: string;
-    };
-
-    const rawHandle = (username ?? firstName ?? '').replace(/^@+/, '').trim();
-    if (rawHandle.length < 2 || rawHandle.length > 32) {
-      res.status(400).json({ error: 'Укажите корректный Telegram @username (от 2 символов).' });
-      return;
-    }
-
-    const user = upsertTelegramUser({
-      telegramId,
-      username: rawHandle,
-      firstName,
-      photoUrl,
-      provider: 'preview',
-    });
-
-    const sessionToken = issueSessionToken(user.id);
-    res.cookie('cardup_tg_session', sessionToken, {
-      httpOnly: true,
-      sameSite: 'lax',
-      maxAge: 1000 * 60 * 60 * 24 * 30,
-    });
-    res.json({ payload: buildPayload(user.id, true), sessionToken });
-  });
-
-  app.post('/api/auth/register', (req, res) => {
-    const { username, referralCode } = req.body as { username?: string; referralCode?: string };
-    const cleanName = (username ?? '').trim();
-    if (cleanName.length < 2 || cleanName.length > 24) {
-      res.status(400).json({ error: 'Никнейм должен содержать от 2 до 24 символов.' });
-      return;
-    }
-    const exists = db.users.find((u) => u.username.toLowerCase() === cleanName.toLowerCase());
-    if (exists) {
-      const sessionToken = issueSessionToken(exists.id);
-      res.json({ ...buildPayload(exists.id, true), sessionToken });
-      return;
-    }
-
-    const palette = ['#F59E0B', '#10B981', '#A855F7', '#38BDF8', '#EC4899'];
-    const newCode = `CARDUP-${cleanName.replace(/[^a-zA-Z0-9]/g, '').slice(0, 4).toUpperCase() || 'USR'}${Math.floor(10 + Math.random() * 89)}`;
-    let startingBalance = 500;
-    let appliedRefCode: string | null = null;
-
-    const cleanRef = (referralCode ?? '').trim().toUpperCase();
-    const referrer = cleanRef ? db.users.find((u) => u.referralCode.toUpperCase() === cleanRef) : undefined;
-    if (referrer) {
-      appliedRefCode = referrer.referralCode;
-      startingBalance += 300;
-      referrer.balance += 150;
-      referrer.referralCount += 1;
-      referrer.referralEarned += 150;
-      recordTx(referrer, 'referral_bonus', 150, `Бонус за приглашение ${cleanName}`, referrer.referralCode);
-    }
-
-    const newUser: UserProfile = {
-      id: uid('user'),
-      username: cleanName,
-      avatarColor: palette[db.users.length % palette.length],
-      balance: startingBalance,
-      referralCode: newCode,
-      referredByCode: appliedRefCode,
-      referralCount: 0,
-      referralEarned: 0,
-      dailyStreak: 0,
-      lastDailyClaimAt: null,
-      totalDeposited: 0,
-      totalUpgrades: 0,
-      wonUpgrades: 0,
-      totalCasesOpened: 0,
-      inventory: [
-        { instanceId: uid('inv'), itemId: 'card_artemiy_daun', acquiredAt: Date.now(), source: 'starter' },
-      ],
-      createdAt: Date.now(),
-    };
-
-    db.users.push(newUser);
-    if (appliedRefCode) {
-      recordTx(newUser, 'referral_bonus', 300, `Приветственный бонус по коду ${appliedRefCode}`);
-    }
-    saveDb();
-    const sessionToken = issueSessionToken(newUser.id);
-    res.json({ ...buildPayload(newUser.id, true), sessionToken });
+    setSessionCookie(res, sessionToken);
+    res.json({ payload: buildPayload(user.id, true) });
   });
 
   app.post('/api/referral/apply', (req, res) => {
-    const { userId, code } = req.body as { userId?: string; code?: string };
-    const user = getUser(userId);
+    const { code } = req.body as { code?: string };
+    const user = authenticatedUser(req, res);
+    if (!user) return;
     const cleanCode = (code ?? '').trim().toUpperCase();
 
     if (!cleanCode) {
@@ -1179,13 +925,13 @@ async function startServer() {
   });
 
   app.post('/api/finance/deposit', (req, res) => {
-    const { userId, amount, method, promoCode } = req.body as {
-      userId?: string;
+    const { amount, method, promoCode } = req.body as {
       amount?: number;
       method?: string;
       promoCode?: string;
     };
-    const user = getUser(userId);
+    const user = authenticatedUser(req, res);
+    if (!user) return;
     const numAmount = Number(amount ?? 0);
     if (!Number.isFinite(numAmount) || numAmount < 50 || numAmount > 250000) {
       res.status(400).json({ error: 'Сумма пополнения должна быть от 50 до 250 000 Т-коин.' });
@@ -1222,8 +968,8 @@ async function startServer() {
   });
 
   app.post('/api/bonus/daily', (req, res) => {
-    const { userId } = req.body as { userId?: string };
-    const user = getUser(userId);
+    const user = authenticatedUser(req, res);
+    if (!user) return;
     const now = Date.now();
     const cooldownMs = 24 * 60 * 60 * 1000;
 
@@ -1246,8 +992,9 @@ async function startServer() {
   });
 
   app.post('/api/inventory/sell', (req, res) => {
-    const { userId, instanceIds } = req.body as { userId?: string; instanceIds?: string[] };
-    const user = getUser(userId);
+    const { instanceIds } = req.body as { instanceIds?: string[] };
+    const user = authenticatedUser(req, res);
+    if (!user) return;
     const ids = Array.isArray(instanceIds) ? instanceIds : [];
     if (ids.length === 0) {
       res.status(400).json({ error: 'Выберите хотя бы одну карточку для продажи.' });
@@ -1276,14 +1023,14 @@ async function startServer() {
   });
 
   app.post('/api/upgrade/roll', (req, res) => {
-    const { userId, instanceIds, balanceAdded, targetItemId, mode } = req.body as {
-      userId?: string;
+    const { instanceIds, balanceAdded, targetItemId, mode } = req.body as {
       instanceIds?: string[];
       balanceAdded?: number;
       targetItemId?: string;
       mode?: RollMode;
     };
-    const user = getUser(userId);
+    const user = authenticatedUser(req, res);
+    if (!user) return;
     const targetItem = db.items.find((it) => it.id === targetItemId);
     if (!targetItem) {
       res.status(404).json({ error: 'Целевой предмет не найден.' });
@@ -1385,8 +1132,9 @@ async function startServer() {
   });
 
   app.post('/api/cases/open', (req, res) => {
-    const { userId, caseId } = req.body as { userId?: string; caseId?: string };
-    const user = getUser(userId);
+    const { caseId } = req.body as { caseId?: string };
+    const user = authenticatedUser(req, res);
+    if (!user) return;
     const caseBox = db.cases.find((c) => c.id === caseId);
     if (!caseBox) {
       res.status(404).json({ error: 'Кейс не найден.' });
@@ -1434,6 +1182,7 @@ async function startServer() {
   });
 
   app.post('/api/admin/items', (req, res) => {
+    if (!adminUser(req, res)) return;
     const { name, rarity, price, imageUrl, caseIds } = req.body as {
       name?: string;
       rarity?: Rarity;
@@ -1489,6 +1238,7 @@ async function startServer() {
   });
 
   app.delete('/api/admin/items/:id', (req, res) => {
+    if (!adminUser(req, res)) return;
     const { id } = req.params;
     const exists = db.items.some((it) => it.id === id);
     if (!exists) {
@@ -1507,6 +1257,7 @@ async function startServer() {
   });
 
   app.post('/api/admin/grant', (req, res) => {
+    if (!adminUser(req, res)) return;
     const { userId, itemId } = req.body as { userId?: string; itemId?: string };
     const user = getUser(userId);
     const item = db.items.find((it) => it.id === itemId);
@@ -1525,6 +1276,7 @@ async function startServer() {
   });
 
   app.post('/api/admin/cases', (req, res) => {
+    if (!adminUser(req, res)) return;
     const { name, description, price, tier, imageUrl, itemIds, rarityWeights } = req.body as {
       name?: string;
       description?: string;
