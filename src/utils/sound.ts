@@ -12,7 +12,6 @@ class SoundEngine {
   private shortClickNoise: AudioBuffer | null = null;
   private whooshNoise: AudioBuffer | null = null;
   private legendaryBuffers: (AudioBuffer | null)[] = [null, null];
-  private preloadStarted = false;
   public muted = false;
 
   private getContext(): AudioContext | null {
@@ -27,28 +26,7 @@ class SoundEngine {
     if (this.ctx.state === 'suspended') {
       this.ctx.resume().catch(() => {});
     }
-    if (!this.preloadStarted) {
-      this.preloadStarted = true;
-      this.preloadLegendaryVoices(this.ctx).catch(() => {});
-    }
     return this.ctx;
-  }
-
-  private async preloadLegendaryVoices(ctx: AudioContext): Promise<void> {
-    await Promise.all(
-      LEGENDARY_VOICE_CLIPS.map(async (url, idx) => {
-        if (this.legendaryBuffers[idx]) return;
-        try {
-          const res = await fetch(url);
-          if (!res.ok) return;
-          const arr = await res.arrayBuffer();
-          const decoded = await ctx.decodeAudioData(arr);
-          this.legendaryBuffers[idx] = decoded;
-        } catch {
-          // Ignore network/decode errors in headless environments
-        }
-      })
-    );
   }
 
   private getShortClickNoise(ctx: AudioContext): AudioBuffer {

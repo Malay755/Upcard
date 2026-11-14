@@ -88,7 +88,7 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Right Zone: Mute + Telegram Sign-In / Profile */}
         <div className="flex items-center gap-2.5 shrink-0">
-          <button type="button" onClick={onOpenDeposit} className="inline-flex items-center gap-1.5 rounded-lg bg-[#FACC15] px-3 py-2 text-xs font-bold text-[#0B0D10] transition-colors hover:bg-[#FDE047] whitespace-nowrap">
+          <button type="button" onClick={onOpenDeposit} className="hidden md:inline-flex items-center gap-1.5 rounded-lg bg-[#FACC15] px-3 py-2 text-xs font-bold text-[#0B0D10] transition-colors hover:bg-[#FDE047] whitespace-nowrap">
             <Coins className="h-3.5 w-3.5" /><span>Пополнить</span>
           </button>
           <button
