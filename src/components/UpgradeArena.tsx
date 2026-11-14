@@ -9,8 +9,6 @@ import {
   RefreshCw,
   Search,
   Settings,
-  Volume2,
-  VolumeX,
   X,
   Zap,
 } from 'lucide-react';
@@ -22,6 +20,7 @@ import { soundFX } from '../utils/sound';
 import { CardFrame } from './CardFrame';
 import { LegendaryRevealModal } from './LegendaryRevealModal';
 import { TelegramPaperPlaneIcon } from './TelegramLoginModal';
+import { GoatLogo } from './GoatLogo';
 
 interface UpgradeArenaProps {
   user: UserProfile;
@@ -42,8 +41,6 @@ interface UpgradeArenaProps {
   }>;
   onSellItems: (instanceIds: string[]) => Promise<void>;
   onGoToCases: () => void;
-  muted: boolean;
-  onToggleMute: () => void;
 }
 
 const TEN_PERCENT_ANGLES = [0, 36, 72, 108, 144, 180, 216, 252, 288, 324];
@@ -122,14 +119,11 @@ interface ConfettiParticle {
   decay: number;
 }
 
-const RifleSilhouetteSvg: React.FC<{ className?: string }> = ({ className = 'w-44 h-28' }) => (
-  <svg
-    viewBox="0 0 240 120"
-    className={className}
-    fill="currentColor"
-    aria-hidden="true"
-  >
-    <path d="M18 62 L58 55 L74 52 L114 48 L122 39 L146 39 L151 47 L186 47 L192 50 L226 50 L226 55 L186 55 L176 62 L152 62 L144 92 L131 94 L137 64 L118 64 L112 75 L96 75 L92 64 L68 68 L52 84 L18 82 L14 70 Z" />
+const CardSilhouetteSvg: React.FC<{ className?: string }> = ({ className = 'w-44 h-28' }) => (
+  <svg viewBox="0 0 160 110" className={className} fill="currentColor" aria-hidden="true">
+    <rect x="36" y="7" width="88" height="96" rx="8" />
+    <rect x="43" y="15" width="74" height="80" rx="4" fill="#14161A" opacity=".45" />
+    <path d="M51 27h58v40H51zM51 74h36v4H51zm0 9h25v3H51z" opacity=".72" />
   </svg>
 );
 
@@ -221,8 +215,6 @@ export const UpgradeArena: React.FC<UpgradeArenaProps> = ({
   onRollUpgrade,
   onSellItems,
   onGoToCases,
-  muted,
-  onToggleMute,
 }) => {
   const [selectedInstanceIds, setSelectedInstanceIds] = useState<string[]>([]);
   const [targetItemId, setTargetItemId] = useState<string>(() => {
@@ -668,15 +660,10 @@ export const UpgradeArena: React.FC<UpgradeArenaProps> = ({
           document.body
         )}
 
-      {/* Centered Hero UPGRADER Title matching Reference 1 */}
+      {/* Brand header */}
       <div className="motion-hero flex items-center justify-center gap-2 pt-1">
-        <svg viewBox="0 0 24 24" className="w-6 h-6 text-[#FACC15]" fill="currentColor" aria-hidden="true">
-          <path d="M12 4L4 11.5L6.2 13.7L12 8.2L17.8 13.7L20 11.5L12 4Z" />
-          <path d="M12 10.5L4 18L6.2 20.2L12 14.7L17.8 20.2L20 18L12 10.5Z" opacity="0.6" />
-        </svg>
-        <h1 className="text-xl font-display font-black tracking-wider uppercase text-white">
-          UPGRADER
-        </h1>
+        <GoatLogo className="h-8 w-8 text-[#FACC15]" />
+        <h1 className="text-xl font-display font-black tracking-wider text-white">Ферма</h1>
       </div>
 
       {/* Top 3-Column Upgrader Stage */}
@@ -694,14 +681,6 @@ export const UpgradeArena: React.FC<UpgradeArenaProps> = ({
               }`}
             >
               <Settings className="w-4 h-4" />
-            </button>
-            <button
-              type="button"
-              onClick={onToggleMute}
-              aria-label={muted ? 'Включить звук' : 'Выключить звук'}
-              className="p-1.5 rounded-md text-[#FACC15] hover:bg-white/[0.05] transition-colors cursor-pointer"
-            >
-              {muted ? <VolumeX className="w-4 h-4 text-slate-400" /> : <Volume2 className="w-4 h-4" />}
             </button>
             <button
               type="button"
@@ -805,7 +784,7 @@ export const UpgradeArena: React.FC<UpgradeArenaProps> = ({
               ) : (
                 <div className="relative flex items-center justify-center py-4">
                   {/* Dark Rifle Silhouette + Center Glowing Yellow Triple Down-Chevrons matching Reference 1 */}
-                  <RifleSilhouetteSvg className="w-48 h-28 text-[#0A0C0F] opacity-90" />
+                  <CardSilhouetteSvg className="w-48 h-28 text-[#0A0C0F] opacity-90" />
                   <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                     <div className="w-24 h-24 rounded-full bg-[#FACC15]/[0.14] blur-2xl" />
                     <svg viewBox="0 0 64 64" className="relative w-14 h-14 text-[#FACC15]" fill="currentColor" aria-hidden="true">
@@ -1068,7 +1047,7 @@ export const UpgradeArena: React.FC<UpgradeArenaProps> = ({
                 </div>
                 <div className="flex-1 flex items-center justify-center py-4">
                   <div className="relative flex items-center justify-center">
-                    <RifleSilhouetteSvg className="w-48 h-28 text-[#0A0C0F] opacity-90" />
+                    <CardSilhouetteSvg className="w-48 h-28 text-[#0A0C0F] opacity-90" />
                     <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                       <div className="w-24 h-24 rounded-full bg-[#FACC15]/[0.14] blur-2xl" />
                       <svg viewBox="0 0 64 64" className="relative w-14 h-14 text-[#FACC15]" fill="currentColor" aria-hidden="true">
@@ -1089,7 +1068,7 @@ export const UpgradeArena: React.FC<UpgradeArenaProps> = ({
       {/* Bottom 2-Column Inventory & Target Catalog */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-stretch">
         {/* Bottom-Left: My Inventory OR Telegram Authorization State matching Reference 1 */}
-        <section className="lg:col-span-5 bg-[#14161A] border border-white/[0.06] rounded-xl p-5 flex flex-col">
+        <section className="lg:col-span-6 bg-[#14161A] border border-white/[0.06] rounded-xl p-5 flex flex-col">
           <div className="flex items-center justify-between gap-2 mb-4">
             <div className="flex items-center gap-2.5">
               <div className="w-7 h-7 rounded-md bg-[#FACC15] text-[#0B0D10] flex items-center justify-center font-bold text-xs">
@@ -1137,7 +1116,7 @@ export const UpgradeArena: React.FC<UpgradeArenaProps> = ({
               {/* Preview Showcase Slots with Yellow-Framed Center Card matching Reference 1 */}
               <div className="grid grid-cols-3 gap-3 w-full items-center pt-1">
                 <div className="h-28 rounded-xl bg-[#0D0F12]/70 border border-white/[0.04] flex items-center justify-center p-2 opacity-35">
-                  <RifleSilhouetteSvg className="w-20 h-14 text-slate-700" />
+                  <CardSilhouetteSvg className="w-20 h-14 text-slate-700" />
                 </div>
 
                 <div className="h-36 rounded-xl bg-[#111318] border border-[#FACC15]/75 p-2 shadow-[0_0_20px_rgba(250,204,21,0.12)] flex items-center justify-center">
@@ -1145,7 +1124,7 @@ export const UpgradeArena: React.FC<UpgradeArenaProps> = ({
                 </div>
 
                 <div className="h-28 rounded-xl bg-[#0D0F12]/70 border border-white/[0.04] flex items-center justify-center p-2 opacity-35">
-                  <RifleSilhouetteSvg className="w-20 h-14 text-slate-700 scale-x-[-1]" />
+                  <CardSilhouetteSvg className="w-20 h-14 text-slate-700 scale-x-[-1]" />
                 </div>
               </div>
             </div>
@@ -1180,7 +1159,7 @@ export const UpgradeArena: React.FC<UpgradeArenaProps> = ({
         </section>
 
         {/* Bottom-Right: Upgrade Target Catalog (No rarity tabs, compact header inputs & compact colored cards) */}
-        <section className="lg:col-span-7 bg-[#14161A] border border-white/[0.06] rounded-xl p-5 flex flex-col justify-between">
+        <section className="lg:col-span-6 bg-[#14161A] border border-white/[0.06] rounded-xl p-5 flex flex-col justify-between">
           <div>
             {/* Single-Line Toolbar matching Reference 1 */}
             <div className="flex flex-wrap items-center justify-between gap-2.5 mb-4">
@@ -1239,7 +1218,7 @@ export const UpgradeArena: React.FC<UpgradeArenaProps> = ({
                 Подходящие карточки не найдены
               </div>
             ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-4 gap-2.5">
+              <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3">
                 {pagedCatalog.map((item) => {
                   const isSelected = targetItemId === item.id;
                   const disabledByPrice =

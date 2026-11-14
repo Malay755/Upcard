@@ -4,7 +4,6 @@ import {
   CheckCircle2,
   ChevronDown,
   Coins,
-  Plus,
   RotateCcw,
   Search,
   Zap,
@@ -17,6 +16,7 @@ import { soundFX } from '../utils/sound';
 import { CardFrame } from './CardFrame';
 import { ScrollReveal } from './ScrollReveal';
 import { CaseStage3D } from './CaseStage3D';
+import { GoatLogo } from './GoatLogo';
 import { CaseThumbnail3D } from './CaseThumbnail3D';
 import { LegendaryRevealModal } from './LegendaryRevealModal';
 import { TelegramPaperPlaneIcon } from './TelegramLoginModal';
@@ -33,7 +33,6 @@ interface CasesViewProps {
   }>;
   onSellItems: (instanceIds: string[]) => Promise<void>;
   onOpenDeposit: () => void;
-  onGoToCreateCase?: () => void;
 }
 
 const CARD_SLOT_WIDTH = 144;
@@ -131,7 +130,6 @@ export const CasesView: React.FC<CasesViewProps> = ({
   onOpenCase,
   onSellItems,
   onOpenDeposit,
-  onGoToCreateCase,
 }) => {
   const [activeCaseId, setActiveCaseId] = useState<string | null>(null);
   const [caseTab, setCaseTab] = useState<'all' | 'author'>('all');
@@ -336,13 +334,8 @@ export const CasesView: React.FC<CasesViewProps> = ({
       <div className="space-y-6">
         {/* Centered Hero Title matching UPGRADER */}
         <div className="flex items-center justify-center gap-2 pt-1">
-          <svg viewBox="0 0 24 24" className="w-6 h-6 text-[#FACC15]" fill="currentColor" aria-hidden="true">
-            <path d="M12 4L4 11.5L6.2 13.7L12 8.2L17.8 13.7L20 11.5L12 4Z" />
-            <path d="M12 10.5L4 18L6.2 20.2L12 14.7L17.8 20.2L20 18L12 10.5Z" opacity="0.6" />
-          </svg>
-          <h1 className="text-xl font-display font-black tracking-wider uppercase text-white">
-            КЕЙСЫ
-          </h1>
+          <GoatLogo className="h-8 w-8 text-[#FACC15]" />
+          <h1 className="text-xl font-display font-black tracking-wider text-white">КЕЙСЫ</h1>
         </div>
 
         {/* Single-Line Filter Toolbar Panel matching Upgrader Catalog Header */}
@@ -388,16 +381,6 @@ export const CasesView: React.FC<CasesViewProps> = ({
               />
             </div>
 
-            {onGoToCreateCase && (
-              <button
-                type="button"
-                onClick={onGoToCreateCase}
-                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[#FACC15] hover:bg-[#FDE047] text-[#0B0D10] font-display font-bold text-xs transition-colors cursor-pointer"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Создать кейс</span>
-              </button>
-            )}
           </div>
         </div>
 

@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Copy, Crown, ExternalLink, Users, UserMinus, UserPlus, X, Coins, LayoutGrid, ShieldCheck, Wallet } from 'lucide-react';
+import { Copy, Crown, ExternalLink, Users, UserMinus, UserPlus, X, Coins, LayoutGrid, ShieldCheck } from 'lucide-react';
 import type {
   BootstrapPayload,
   FriendProfile,
@@ -15,6 +15,7 @@ import { useCleanCardImage } from '../utils/cardCutout';
 import { formatTC, RARITY_LABELS } from '../utils/economics';
 import { soundFX } from '../utils/sound';
 import { TelegramPaperPlaneIcon } from './TelegramLoginModal';
+import { GoatLogo } from './GoatLogo';
 
 interface ProfileViewProps {
   user: UserProfile;
@@ -27,7 +28,6 @@ interface ProfileViewProps {
   friendInviteNotice: string;
   onOpenTelegramLogin: () => void;
   onSellItems: (instanceIds: string[]) => Promise<void>;
-  onOpenDeposit: () => void;
   onGoToUpgrade: () => void;
   onAddFriend: (code: string) => Promise<BootstrapPayload>;
   onAcceptFriendRequest: (id: string) => Promise<void>;
@@ -119,7 +119,6 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   friendInviteNotice,
   onOpenTelegramLogin,
   onSellItems,
-  onOpenDeposit,
   onGoToUpgrade,
   onAddFriend,
   onAcceptFriendRequest,
@@ -147,11 +146,6 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   );
   const topDrop = user.topDropItemId ? itemsMap.get(user.topDropItemId) : undefined;
   const inviteLink = `${window.location.origin}/?friend=${encodeURIComponent(user.friendCode)}`;
-
-  const winRate =
-    user.totalUpgrades > 0
-      ? ((user.wonUpgrades / user.totalUpgrades) * 100).toFixed(1)
-      : '0.0';
 
   const handleSellAll = async () => {
     if (inventoryEntries.length === 0) return;
@@ -246,12 +240,9 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
 
   return (
     <div className="space-y-6">
-      {/* Centered Hero Title matching UPGRADER */}
+      {/* Profile header */}
       <div className="flex items-center justify-center gap-2 pt-1">
-        <svg viewBox="0 0 24 24" className="w-6 h-6 text-[#FACC15]" fill="currentColor" aria-hidden="true">
-          <path d="M12 4L4 11.5L6.2 13.7L12 8.2L17.8 13.7L20 11.5L12 4Z" />
-          <path d="M12 10.5L4 18L6.2 20.2L12 14.7L17.8 20.2L20 18L12 10.5Z" opacity="0.6" />
-        </svg>
+        <GoatLogo className="h-8 w-8 text-[#FACC15]" />
         <h1 className="text-xl font-display font-black tracking-wider uppercase text-white">
           ПРОФИЛЬ
         </h1>
@@ -301,20 +292,10 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2.5">
-            <button
-              type="button"
-              onClick={onOpenDeposit}
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[#FACC15] hover:bg-[#FDE047] text-[#0B0D10] font-display font-bold text-xs transition-colors cursor-pointer shadow-[0_0_20px_rgba(250,204,21,0.18)]"
-            >
-              <Wallet className="w-3.5 h-3.5" />
-              <span>Пополнить</span>
-            </button>
-          </div>
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-3 2xl:grid-cols-6 gap-3 mt-5 pt-5 border-t border-white/[0.06]">
-          <div className="relative overflow-hidden bg-[#0D0F12] border border-white/[0.06] rounded-xl p-4">
+        <div className="grid grid-cols-2 md:grid-cols-3 2xl:grid-cols-5 gap-3 mt-5 pt-5 border-t border-white/[0.06]">
+          <div className="order-1 relative overflow-hidden bg-[#0D0F12] border border-white/[0.06] rounded-xl p-4">
             <span aria-hidden="true" className="absolute top-0 inset-x-0 h-[2px] bg-[#FACC15]" />
             <div className="text-[11px] text-slate-400">Баланс</div>
             <div className="text-xl font-mono-num font-bold text-[#FACC15] mt-1">
@@ -322,7 +303,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             </div>
           </div>
 
-          <div className="relative overflow-hidden bg-[#0D0F12] border border-white/[0.06] rounded-xl p-4">
+          <div className="order-2 relative overflow-hidden bg-[#0D0F12] border border-white/[0.06] rounded-xl p-4">
             <span aria-hidden="true" className="absolute top-0 inset-x-0 h-[2px] bg-purple-400" />
             <div className="text-[11px] text-slate-400">Инвентарь ({inventoryEntries.length})</div>
             <div className="text-xl font-mono-num font-bold text-white mt-1">
@@ -330,25 +311,14 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             </div>
           </div>
 
-          <div className="relative overflow-hidden bg-[#0D0F12] border border-white/[0.06] rounded-xl p-4">
-            <span aria-hidden="true" className="absolute top-0 inset-x-0 h-[2px] bg-emerald-400" />
-            <div className="text-[11px] text-slate-400">Винрейт апгрейдов</div>
-            <div className="text-xl font-mono-num font-bold text-emerald-400 mt-1">
-              {winRate}%{' '}
-              <span className="text-xs text-slate-400 font-normal">
-                ({user.wonUpgrades}/{user.totalUpgrades})
-              </span>
-            </div>
-          </div>
-
-          <div className="relative overflow-hidden bg-[#0D0F12] border border-white/[0.06] rounded-xl p-4">
+          <div className="order-5 relative overflow-hidden bg-[#0D0F12] border border-white/[0.06] rounded-xl p-4">
             <span aria-hidden="true" className="absolute top-0 inset-x-0 h-[2px] bg-slate-400" />
             <div className="text-[11px] text-slate-400">Кейсов открыто</div>
             <div className="text-xl font-mono-num font-bold text-white mt-1">
               {user.totalCasesOpened}
             </div>
           </div>
-          <div className="relative min-w-0 overflow-hidden bg-[#0D0F12] border border-white/[0.06] rounded-xl p-4">
+          <div className="order-3 relative min-w-0 overflow-hidden bg-[#0D0F12] border border-white/[0.06] rounded-xl p-4">
             <span aria-hidden="true" className="absolute top-0 inset-x-0 h-[2px] bg-amber-300" />
             <div className="text-[11px] text-slate-400">Топ-дроп</div>
             {topDrop ? (
@@ -363,7 +333,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
               <div className="mt-2 text-sm text-slate-500">Пока нет выпадений</div>
             )}
           </div>
-          <div className="relative overflow-hidden bg-[#0D0F12] border border-white/[0.06] rounded-xl p-4">
+          <div className="order-4 relative overflow-hidden bg-[#0D0F12] border border-white/[0.06] rounded-xl p-4">
             <span aria-hidden="true" className="absolute top-0 inset-x-0 h-[2px] bg-cyan-400" />
             <div className="text-[11px] text-slate-400">Апгрейдов совершено</div>
             <div className="text-xl font-mono-num font-bold text-white mt-1">

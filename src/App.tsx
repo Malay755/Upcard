@@ -14,7 +14,6 @@ const UpgradeArena = lazy(() => import('./components/UpgradeArena').then((m) => 
 const CasesView = lazy(() => import('./components/CasesView').then((m) => ({ default: m.CasesView })));
 const BonusesView = lazy(() => import('./components/BonusesView').then((m) => ({ default: m.BonusesView })));
 const ProfileView = lazy(() => import('./components/ProfileView').then((m) => ({ default: m.ProfileView })));
-const AdminView = lazy(() => import('./components/AdminView').then((m) => ({ default: m.AdminView })));
 const BattlesView = lazy(() => import('./components/BattlesView').then((m) => ({ default: m.BattlesView })));
 
 async function apiJson<T>(url: string, options?: RequestInit): Promise<T> {
@@ -45,7 +44,39 @@ export default function App() {
   const [liveDrops, setLiveDrops] = useState<LiveDropEntry[]>([]);
   const [friendInviteNotice, setFriendInviteNotice] = useState('');
   const [realtimeNotice, setRealtimeNotice] = useState<{ text: string; tab: AppTab } | null>(null);
+  const [hasUnreadNotice, setHasUnreadNotice] = useState(false);
   const handledInviteCode = useRef('');
+  const noticeTimer = useRef<number | null>(null);
+  const activeTabRef = useRef(activeTab);
+
+  const navigateToTab = useCallback((tab: AppTab) => {
+    if (tab === activeTabRef.current) return;
+    window.history.pushState({ farmTab: tab }, '', `${window.location.pathname}${window.location.search}`);
+    activeTabRef.current = tab;
+    setActiveTab(tab);
+  }, []);
+
+  useEffect(() => () => {
+    if (noticeTimer.current !== null) window.clearTimeout(noticeTimer.current);
+  }, []);
+
+  useEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
+
+  useEffect(() => {
+    window.history.replaceState({ ...window.history.state, farmTab: activeTab }, '');
+    const popTab = (event: PopStateEvent) => {
+      const tab = (event.state?.farmTab as AppTab | undefined) ?? 'upgrade';
+      activeTabRef.current = tab;
+      setActiveTab(tab);
+    };
+    const mouseNavigation = (event: MouseEvent) => {
+      if (event.button === 3) { event.preventDefault(); window.history.back(); }
+      if (event.button === 4) { event.preventDefault(); window.history.forward(); }
+    };
+    window.addEventListener('popstate', popTab);
+    window.addEventListener('mousedown', mouseNavigation);
+    return () => { window.removeEventListener('popstate', popTab); window.removeEventListener('mousedown', mouseNavigation); };
+  }, []);
 
   const loadBootstrap = useCallback(async () => {
     try {
@@ -127,10 +158,14 @@ export default function App() {
         };
         if (message.type && noticeTypes[message.type]) {
           setRealtimeNotice(noticeTypes[message.type]);
+          setHasUnreadNotice(true);
+          if (noticeTimer.current !== null) window.clearTimeout(noticeTimer.current);
+          noticeTimer.current = window.setTimeout(() => setRealtimeNotice(null), 6500);
           soundFX.playCoin();
           if ('Notification' in window && Notification.permission === 'granted' && document.hidden) {
-            const notification = new Notification('UPGRADER', { body: noticeTypes[message.type].text, tag: message.type });
-            notification.onclick = () => { window.focus(); setActiveTab(noticeTypes[message.type!].tab); notification.close(); };
+            const notification = new Notification('Ферма', { body: noticeTypes[message.type].text, tag: message.type });
+            window.setTimeout(() => notification.close(), 6500);
+            notification.onclick = () => { window.focus(); navigateToTab(noticeTypes[message.type!].tab); setHasUnreadNotice(false); notification.close(); };
           }
           void refreshPayload();
         }
@@ -373,7 +408,7 @@ export default function App() {
   };
 
   if (loading) {
-    return <LoadingOverlay label="Загрузка UPGRADER" />;
+    return <LoadingOverlay label="Загружаем Ферму" />;
   }
 
   if (loadError || !payload) {
@@ -393,9 +428,9 @@ export default function App() {
 
   return (
     <div className="min-h-screen flex flex-col text-slate-100">
-      <Header
+        <Header
         activeTab={activeTab}
-        onTabChange={setActiveTab}
+        onTabChange={navigateToTab}
         user={payload.user}
         isAuthorized={isAuthorized}
         onOpenTelegramLogin={() => setTelegramLoginOpen(true)}
@@ -418,9 +453,7 @@ export default function App() {
               onOpenTelegramLogin={() => setTelegramLoginOpen(true)}
               onRollUpgrade={handleRollUpgrade}
               onSellItems={handleSellItems}
-              onGoToCases={() => setActiveTab('cases')}
-              muted={muted}
-              onToggleMute={handleToggleMute}
+              onGoToCases={() => navigateToTab('cases')}
             />
           )}
 
@@ -434,7 +467,6 @@ export default function App() {
               onOpenCase={handleOpenCase}
               onSellItems={handleSellItems}
               onOpenDeposit={openDeposit}
-              onGoToCreateCase={() => setActiveTab('admin')}
             />
           )}
 
@@ -473,8 +505,7 @@ export default function App() {
               friendInviteNotice={friendInviteNotice}
               onOpenTelegramLogin={() => setTelegramLoginOpen(true)}
               onSellItems={handleSellItems}
-              onOpenDeposit={openDeposit}
-              onGoToUpgrade={() => setActiveTab('upgrade')}
+              onGoToUpgrade={() => navigateToTab('upgrade')}
               onAddFriend={handleAddFriend}
               onAcceptFriendRequest={(id) => handleFriendRequest(id, true)}
               onDeclineFriendRequest={(id) => handleFriendRequest(id, false)}
@@ -483,16 +514,6 @@ export default function App() {
             />
           )}
 
-          {activeTab === 'admin' && (
-            <AdminView
-              items={payload.items}
-              cases={payload.cases}
-              onCreateItem={handleCreateItem}
-              onDeleteItem={handleDeleteItem}
-              onGrantItem={handleGrantItem}
-              onCreateCase={handleCreateCase}
-            />
-          )}
         </div>
         </Suspense>
       </main>
@@ -500,7 +521,7 @@ export default function App() {
 
       <footer className="border-t border-white/[0.06] py-4 px-4 sm:px-6 text-xs text-slate-500">
         <div className="max-w-[1320px] mx-auto flex flex-col sm:flex-row items-center justify-between gap-2">
-          <span>UPGRADER · Оффлайн платформа апгрейдов и кейсов на Т-коинах</span>
+          <span>Ферма · Платформа карточек и кейсов на Т-коинах</span>
           <span>Валюта Т-коин является вымышленной и не имеет реальной денежной ценности</span>
         </div>
       </footer>
@@ -513,9 +534,10 @@ export default function App() {
 
       {realtimeNotice && <div role="status" className="fixed bottom-5 right-5 z-50 flex max-w-sm items-center gap-3 rounded-xl border border-amber-300/20 bg-[#171a20] p-4 shadow-2xl">
         <span className="flex-1 text-sm text-white">{realtimeNotice.text}</span>
-        <button type="button" onClick={() => { setActiveTab(realtimeNotice.tab); setRealtimeNotice(null); }} className="whitespace-nowrap rounded-lg bg-amber-400 px-3 py-2 text-xs font-bold text-slate-950">Открыть</button>
+        <button type="button" onClick={() => { navigateToTab(realtimeNotice.tab); setRealtimeNotice(null); setHasUnreadNotice(false); }} className="whitespace-nowrap rounded-lg bg-amber-400 px-3 py-2 text-xs font-bold text-slate-950">Открыть</button>
         <button type="button" onClick={() => setRealtimeNotice(null)} aria-label="Закрыть уведомление" className="text-slate-500">×</button>
       </div>}
+      {!realtimeNotice && hasUnreadNotice && <button type="button" onClick={() => setHasUnreadNotice(false)} title="Есть непрочитанное сообщение" aria-label="Есть непрочитанное сообщение" className="fixed bottom-5 right-5 z-50 h-4 w-4 rounded-full bg-amber-300 shadow-[0_0_14px_rgba(250,204,21,.8)] animate-pulse"><span className="sr-only">Новое сообщение</span></button>}
 
       <TelegramLoginModal
         isOpen={telegramLoginOpen}

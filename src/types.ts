@@ -2,7 +2,7 @@ export type Rarity = 'common' | 'rare' | 'epic' | 'legendary';
 
 export type RollMode = 'under' | 'over';
 
-export type AppTab = 'upgrade' | 'cases' | 'battles' | 'bonuses' | 'profile' | 'admin';
+export type AppTab = 'upgrade' | 'cases' | 'battles' | 'bonuses' | 'profile';
 export type BattleMode = 'cases' | 'upgrade';
 export type BattleStatus = 'waiting' | 'completed' | 'cancelled';
 

@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { Coins, LogOut, Volume2, VolumeX } from 'lucide-react';
 import type { AppTab, UserProfile } from '../types';
 import { TelegramPaperPlaneIcon } from './TelegramLoginModal';
+import { GoatLogo } from './GoatLogo';
+import { formatTC } from '../utils/economics';
 
 interface HeaderProps {
   activeTab: AppTab;
@@ -21,7 +23,6 @@ const NAV_ITEMS: { id: AppTab; label: string }[] = [
   { id: 'battles', label: 'Батлы' },
   { id: 'bonuses', label: 'Бонусы' },
   { id: 'profile', label: 'Профиль' },
-  { id: 'admin', label: 'Админ' },
 ];
 
 export const Header: React.FC<HeaderProps> = ({
@@ -47,18 +48,15 @@ export const Header: React.FC<HeaderProps> = ({
   return (
     <header className={`sticky top-0 z-40 border-b border-white/[0.06] backdrop-blur-md transition-[background-color,box-shadow] duration-300 ${scrolled ? 'bg-[#0D0F12]/95 shadow-lg shadow-black/20' : 'bg-[#0D0F12]/80'}`}>
       <div className="max-w-[1320px] mx-auto w-full px-4 sm:px-6 h-14 flex items-center justify-between gap-4">
-        {/* Left Zone: ^^ UPGRADER Brand */}
+        {/* Brand */}
         <div className="flex items-center min-w-0">
           <button
             type="button"
             onClick={() => onTabChange('upgrade')}
             className="flex items-center gap-2 text-base font-display font-extrabold tracking-wider text-white hover:text-[#FACC15] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
           >
-            <svg viewBox="0 0 24 24" className="w-5 h-5 text-[#FACC15]" fill="currentColor" aria-hidden="true">
-              <path d="M12 4L4 11.5L6.2 13.7L12 8.2L17.8 13.7L20 11.5L12 4Z" />
-              <path d="M12 10.5L4 18L6.2 20.2L12 14.7L17.8 20.2L20 18L12 10.5Z" opacity="0.6" />
-            </svg>
-            <span className="uppercase">UPGRADER</span>
+            <GoatLogo className="h-8 w-8 text-[#FACC15]" />
+            <span>Ферма</span>
           </button>
         </div>
 
@@ -88,8 +86,8 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Right Zone: Mute + Telegram Sign-In / Profile */}
         <div className="flex items-center gap-2.5 shrink-0">
-          <button type="button" onClick={onOpenDeposit} className="hidden md:inline-flex items-center gap-1.5 rounded-lg bg-[#FACC15] px-3 py-2 text-xs font-bold text-[#0B0D10] transition-colors hover:bg-[#FDE047] whitespace-nowrap">
-            <Coins className="h-3.5 w-3.5" /><span>Пополнить</span>
+          <button type="button" onClick={onOpenDeposit} className="hidden md:inline-flex items-center gap-2 rounded-lg bg-[#FACC15] px-3 py-2 text-xs font-bold text-[#0B0D10] transition-colors hover:bg-[#FDE047] whitespace-nowrap">
+            <Coins className="h-3.5 w-3.5" /><span>Пополнить</span><span className="border-l border-black/20 pl-2 font-mono-num">{formatTC(user.balance)} TC</span>
           </button>
           <button
             type="button"
@@ -149,9 +147,9 @@ export const Header: React.FC<HeaderProps> = ({
       {/* Compact Mobile Nav */}
       <nav
         aria-label="Мобильная навигация"
-        className="flex md:hidden items-center justify-around border-t border-white/[0.06] px-2 py-1.5 overflow-x-auto"
+        className="flex md:hidden items-center gap-1 border-t border-white/[0.06] px-2 py-1.5 overflow-x-auto"
       >
-        <button type="button" onClick={onOpenDeposit} className="mx-1 inline-flex items-center gap-1 rounded-md bg-[#FACC15] px-2.5 py-1.5 text-xs font-bold text-[#0B0D10] whitespace-nowrap"><Coins className="h-3.5 w-3.5"/> Пополнить</button>
+        <button type="button" onClick={onOpenDeposit} className="mx-1 inline-flex items-center gap-1 rounded-md bg-[#FACC15] px-2.5 py-1.5 text-xs font-bold text-[#0B0D10] whitespace-nowrap"><Coins className="h-3.5 w-3.5"/> {formatTC(user.balance)} TC · +</button>
         {NAV_ITEMS.map((item) => {
           const isActive = activeTab === item.id;
           return (
@@ -159,7 +157,7 @@ export const Header: React.FC<HeaderProps> = ({
               key={item.id}
               type="button"
               onClick={() => onTabChange(item.id)}
-              className={`px-2.5 py-1.5 text-xs font-medium rounded-md whitespace-nowrap shrink-0 ${
+              className={`shrink-0 px-2.5 py-1.5 text-xs font-medium rounded-md whitespace-nowrap ${
                 isActive ? 'text-[#FACC15] bg-white/[0.06]' : 'text-slate-400'
               }`}
             >
