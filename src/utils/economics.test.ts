@@ -52,7 +52,7 @@ test('calculateCaseDropProbabilities normalizes probabilities to ~100% and respe
   ];
 
   const probs = calculateCaseDropProbabilities(
-    { rarityWeights: { common: 60, rare: 25, epic: 12, legendary: 3 } },
+    { rarityWeights: { common: 60, rare: 25, super_rare: 0, epic: 12, legendary: 3 } },
     items
   );
 

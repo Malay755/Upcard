@@ -21,6 +21,11 @@ export const RARITY_THEMES: Record<Rarity, RarityAccent> = {
     glow: 'rgba(168, 85, 247, 0.42)',
     ringColor: '#D8B4FE',
   },
+  super_rare: {
+    accentHex: '#38BDF8',
+    glow: 'rgba(56, 189, 248, 0.42)',
+    ringColor: '#7DD3FC',
+  },
   rare: {
     accentHex: '#34D399',
     glow: 'rgba(34, 197, 94, 0.36)',

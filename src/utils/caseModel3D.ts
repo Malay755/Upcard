@@ -192,6 +192,26 @@ const FALLBACK_POOL_BY_TIER: Record<Rarity, Omit<CaseTheme3D, 'id' | 'labelTag' 
       crest: 'diamond',
     },
   ],
+  super_rare: [
+    {
+      bodyColor: '#18212D',
+      lidColor: '#111822',
+      bumperColor: '#090D14',
+      hardwareColor: '#BAE6FD',
+      accentColor: '#38BDF8',
+      glowColor: '#FF981A',
+      crest: 'shield',
+    },
+    {
+      bodyColor: '#192230',
+      lidColor: '#121925',
+      bumperColor: '#0A0E16',
+      hardwareColor: '#93C5FD',
+      accentColor: '#2563EB',
+      glowColor: '#FF981A',
+      crest: 'diamond',
+    },
+  ],
   epic: [
     {
       bodyColor: '#231D27',

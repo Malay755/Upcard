@@ -34,6 +34,8 @@ import {
   calculateCaseExpectedValue,
   recommendedCasePrice,
 } from './src/utils/economics.ts';
+import { inferCardCollection } from './src/utils/collections.ts';
+import { getCardDiscoveryXp } from './src/utils/progression.ts';
 
 const PORT = Number(process.env.PORT) || 3000;
 const DATA_DIR = path.resolve(process.cwd(), 'data');
@@ -54,6 +56,7 @@ interface DatabaseSchema {
   revokedTokens?: string[];
   authVersion?: number;
   economyVersion?: number;
+  catalogVersion?: number;
   consumedTelegramHashes?: { hash: string; expiresAt: number }[];
 }
 
@@ -120,6 +123,57 @@ function inferTopDrop(
   return items.filter((item) => wonIds.has(item.id)).sort((a, b) => b.price - a.price)[0] ?? null;
 }
 
+function inferUnlockedItemIds(
+  user: Partial<UserProfile>,
+  items: ItemCard[],
+  history: UpgradeHistoryEntry[],
+  transactions: Transaction[],
+  deprecatedIds: Set<string> = new Set()
+): string[] {
+  const validIds = new Set(items.map((item) => item.id));
+  const unlocked = new Set<string>();
+
+  for (const id of Array.isArray(user.unlockedItemIds) ? user.unlockedItemIds : []) {
+    if (validIds.has(id) && !deprecatedIds.has(id)) unlocked.add(id);
+  }
+  for (const inv of Array.isArray(user.inventory) ? user.inventory : []) {
+    if (validIds.has(inv.itemId) && !deprecatedIds.has(inv.itemId)) unlocked.add(inv.itemId);
+  }
+  if (user.topDropItemId && validIds.has(user.topDropItemId) && !deprecatedIds.has(user.topDropItemId)) {
+    unlocked.add(user.topDropItemId);
+  }
+  for (const entry of history) {
+    if (entry.userId === user.id && entry.won && validIds.has(entry.targetItemId) && !deprecatedIds.has(entry.targetItemId)) {
+      unlocked.add(entry.targetItemId);
+    }
+  }
+  const namesFromCases = new Set(
+    transactions
+      .filter((tx) => tx.userId === user.id && tx.type === 'case_open' && tx.meta?.startsWith('Выпал: '))
+      .map((tx) => tx.meta!.slice('Выпал: '.length))
+  );
+  for (const item of items) {
+    if (namesFromCases.has(item.name) && !deprecatedIds.has(item.id)) {
+      unlocked.add(item.id);
+    }
+  }
+  return [...unlocked];
+}
+
+function grantCardDiscovery(user: UserProfile, itemId: string): number {
+  user.unlockedItemIds = Array.isArray(user.unlockedItemIds) ? user.unlockedItemIds : [];
+  user.xp = Math.max(0, Math.round(Number(user.xp) || 0));
+  if (user.unlockedItemIds.includes(itemId)) return 0;
+
+  const item = db.items.find((candidate) => candidate.id === itemId);
+  if (!item) return 0;
+
+  user.unlockedItemIds.push(itemId);
+  const gained = getCardDiscoveryXp(item);
+  user.xp += gained;
+  return gained;
+}
+
 function consumeTelegramHash(hash: string): boolean {
   const now = Date.now();
   db.consumedTelegramHashes = (db.consumedTelegramHashes ?? [])
@@ -140,72 +194,153 @@ function createInitialDb(): DatabaseSchema {
       id: 'card_artemiy_daun',
       name: 'Артемий Даун',
       rarity: 'rare',
+      collection: 'Даун',
       price: 360,
-      imageUrl: '/assets/aistudio/____________b668a6c6.png',
+      imageUrl: '/assets/cards/artemiy_daun.png',
       createdAt: now - 86400000 * 6,
+    },
+    {
+      id: 'card_michael_pizdyuk',
+      name: 'Майкл Пиздюк',
+      rarity: 'rare',
+      collection: 'Майкл',
+      price: 460,
+      imageUrl: '/assets/cards/michael_pizdyuk.png',
+      createdAt: now - 86400000 * 5.5,
     },
     {
       id: 'card_hustler_artemiy',
       name: 'Хастлер Артемий',
       rarity: 'rare',
+      collection: 'Артемий',
       price: 580,
-      imageUrl: '/assets/aistudio/____________c19dd8da.png',
+      imageUrl: '/assets/cards/hustler_artemiy.png',
       createdAt: now - 86400000 * 5,
+    },
+    {
+      id: 'card_spy_michael',
+      name: 'Шпион Майкл',
+      rarity: 'super_rare',
+      collection: 'Майкл',
+      price: 980,
+      imageUrl: '/assets/cards/spy_michael.png',
+      createdAt: now - 86400000 * 4.5,
     },
     {
       id: 'card_down_timur',
       name: 'Даун Тимур',
       rarity: 'epic',
+      collection: 'Даун',
       price: 1500,
-      imageUrl: '/assets/aistudio/____________5ef8ef47.png',
+      imageUrl: '/assets/cards/down_timur.png',
       createdAt: now - 86400000 * 4,
+    },
+    {
+      id: 'card_drunk_artemiy',
+      name: 'Бухой Артемий',
+      rarity: 'epic',
+      collection: 'Артемий',
+      price: 1680,
+      imageUrl: '/assets/cards/drunk_artemiy.png',
+      createdAt: now - 86400000 * 3.5,
     },
     {
       id: 'card_kiri_chan',
       name: 'Кири-тян',
       rarity: 'epic',
+      collection: 'Кирилл',
       price: 1850,
-      imageUrl: '/assets/aistudio/____________f6f0617f.png',
+      imageUrl: '/assets/cards/kiri_chan.png',
       createdAt: now - 86400000 * 3,
+    },
+    {
+      id: 'card_class_4b',
+      name: '4Б',
+      rarity: 'epic',
+      collection: 'Сквад',
+      price: 1950,
+      imageUrl: '/assets/cards/class_4b.png',
+      createdAt: now - 86400000 * 2.75,
+    },
+    {
+      id: 'card_hunchback_timur',
+      name: 'Горбатый Тимур',
+      rarity: 'epic',
+      collection: 'Тимур',
+      price: 2150,
+      imageUrl: '/assets/cards/hunchback_timur.png',
+      createdAt: now - 86400000 * 2.5,
     },
     {
       id: 'card_usaty_vanya',
       name: 'Усатый Ваня',
       rarity: 'epic',
+      collection: 'Ваня',
       price: 2400,
-      imageUrl: '/assets/aistudio/____________366eede1.png',
+      imageUrl: '/assets/cards/usaty_vanya.png',
       createdAt: now - 86400000 * 2,
+    },
+    {
+      id: 'card_eblany',
+      name: 'Ебланы',
+      rarity: 'epic',
+      collection: 'Сквад',
+      price: 2650,
+      imageUrl: '/assets/cards/eblany.png',
+      createdAt: now - 86400000 * 1.5,
     },
     {
       id: 'card_jopa_michaela',
       name: 'Жопа Майкла',
       rarity: 'epic',
+      collection: 'Майкл',
       price: 2900,
-      imageUrl: '/assets/aistudio/____________9e93982f.png',
+      imageUrl: '/assets/cards/jopa_michaela.png',
       createdAt: now - 86400000 * 1,
+    },
+    {
+      id: 'card_photographer_timur',
+      name: 'Фотограф Тимур',
+      rarity: 'legendary',
+      collection: 'Тимур',
+      price: 5400,
+      imageUrl: '/assets/cards/photographer_timur.png',
+      createdAt: now - 3600000 * 21,
     },
     {
       id: 'card_timur_volga',
       name: 'Тимур на Волге',
       rarity: 'legendary',
+      collection: 'Тимур',
       price: 6200,
-      imageUrl: '/assets/aistudio/____________ae346142.png',
+      imageUrl: '/assets/cards/timur_volga.png',
       createdAt: now - 3600000 * 18,
+    },
+    {
+      id: 'card_crazy_artemiy',
+      name: 'Сумашедший Артемий',
+      rarity: 'legendary',
+      collection: 'Артемий',
+      price: 7800,
+      imageUrl: '/assets/cards/crazy_artemiy.png',
+      createdAt: now - 3600000 * 15,
     },
     {
       id: 'card_vanya_dripchik',
       name: 'Ваня Дрипчик',
       rarity: 'legendary',
+      collection: 'Ваня',
       price: 9500,
-      imageUrl: '/assets/aistudio/____________2942f215.png',
+      imageUrl: '/assets/cards/vanya_dripchik.png',
       createdAt: now - 3600000 * 12,
     },
     {
       id: 'card_tenet_t4',
       name: 'TENET T4',
       rarity: 'legendary',
+      collection: 'Сквад',
       price: 14500,
-      imageUrl: '/assets/aistudio/____________7bcb17dc.png',
+      imageUrl: '/assets/cards/tenet_t4.png',
       createdAt: now - 3600000 * 6,
     },
   ];
@@ -214,142 +349,208 @@ function createInitialDb(): DatabaseSchema {
     {
       id: 'case_starter',
       name: 'Зелёный Старт',
-      description: 'Входной кейс с карточками Артемия и шансом выбить эпический фиолетовый дроп.',
+      description: 'Входной кейс с карточками Артемия и Майкла Пиздюка плюс шанс выбить сверхредкий и эпический дроп.',
       price: 390,
       tier: 'rare',
       imageUrl: '/src/assets/images/case_epic_crate_1794514882592.jpg',
-      itemIds: ['card_artemiy_daun', 'card_hustler_artemiy', 'card_down_timur', 'card_kiri_chan'],
-      rarityWeights: { common: 0, rare: 78, epic: 22, legendary: 0 },
+      itemIds: [
+        'card_artemiy_daun',
+        'card_michael_pizdyuk',
+        'card_hustler_artemiy',
+        'card_spy_michael',
+        'card_down_timur',
+        'card_kiri_chan',
+      ],
+      rarityWeights: { common: 0, rare: 70, super_rare: 12, epic: 18, legendary: 0 },
     },
     {
       id: 'case_hustle',
       name: 'Ночной Хастл',
-      description: 'Изумрудный хастл-микс со ставкой на Дауна Тимура, Кири-тян и Усатого Ваню.',
+      description: 'Изумрудный хастл-микс со ставкой на Шпиона Майкла, Бухого Артемия, Дауна Тимура и Усатого Ваню.',
       price: 690,
       tier: 'rare',
       imageUrl: '/src/assets/images/case_epic_crate_1794514882592.jpg',
       itemIds: [
         'card_artemiy_daun',
+        'card_michael_pizdyuk',
         'card_hustler_artemiy',
+        'card_spy_michael',
         'card_down_timur',
+        'card_drunk_artemiy',
         'card_kiri_chan',
         'card_usaty_vanya',
       ],
-      rarityWeights: { common: 0, rare: 62, epic: 38, legendary: 0 },
+      rarityWeights: { common: 0, rare: 48, super_rare: 18, epic: 34, legendary: 0 },
+    },
+    {
+      id: 'case_spy_cobalt',
+      name: 'Кобальт Шпион',
+      description: 'Синий сверхредкий кейс с главным дропом Шпиона Майкла, 4Б и эпической поддержкой сквада.',
+      price: 940,
+      tier: 'super_rare',
+      imageUrl: '/src/assets/images/case_epic_crate_1794514882592.jpg',
+      itemIds: [
+        'card_michael_pizdyuk',
+        'card_hustler_artemiy',
+        'card_spy_michael',
+        'card_class_4b',
+        'card_hunchback_timur',
+        'card_eblany',
+      ],
+      rarityWeights: { common: 0, rare: 24, super_rare: 48, epic: 28, legendary: 0 },
     },
     {
       id: 'case_cosmos',
       name: 'Космос Сквад',
-      description: 'Баланс редких и эпических карт сквада с шансом сорвать золотого Тимура на Волге.',
+      description: 'Баланс сверхредких и эпических карт (4Б, Горбатый Тимур, Ебланы) с шансом сорвать легендарного Фотографа Тимура.',
       price: 1450,
       tier: 'epic',
       imageUrl: '/src/assets/images/case_epic_crate_1794514882592.jpg',
       itemIds: [
         'card_artemiy_daun',
         'card_hustler_artemiy',
+        'card_spy_michael',
         'card_down_timur',
         'card_kiri_chan',
+        'card_class_4b',
+        'card_hunchback_timur',
         'card_usaty_vanya',
+        'card_eblany',
         'card_jopa_michaela',
+        'card_photographer_timur',
         'card_timur_volga',
       ],
-      rarityWeights: { common: 0, rare: 34, epic: 56, legendary: 10 },
+      rarityWeights: { common: 0, rare: 22, super_rare: 16, epic: 52, legendary: 10 },
     },
     {
       id: 'case_drip_legend',
       name: 'Дрип Легенд',
-      description: 'Флагманский золотой кейс с повышенным шансом на Тимура на Волге и Ваню Дрипчика.',
+      description: 'Флагманский золотой кейс с повышенным шансом на Сумашедшего Артемия, Фотографа Тимура и Ваню Дрипчика.',
       price: 3200,
       tier: 'legendary',
       imageUrl: '/src/assets/images/case_legend_crate_1794514881507.jpg',
       itemIds: [
         'card_hustler_artemiy',
         'card_down_timur',
+        'card_class_4b',
         'card_usaty_vanya',
+        'card_eblany',
         'card_jopa_michaela',
+        'card_photographer_timur',
         'card_timur_volga',
+        'card_crazy_artemiy',
         'card_vanya_dripchik',
       ],
-      rarityWeights: { common: 0, rare: 18, epic: 52, legendary: 30 },
+      rarityWeights: { common: 0, rare: 14, super_rare: 0, epic: 54, legendary: 32 },
     },
     {
       id: 'case_tenet_vip',
       name: 'TENET Автосалон VIP',
-      description: 'Элитный кейс только с эпиками и всеми тремя золотыми легендами, включая TENET T4.',
+      description: 'Элитный кейс только с топовыми эпиками и золотыми легендами, включая Сумашедшего Артемия и TENET T4.',
       price: 5400,
       tier: 'legendary',
       imageUrl: '/src/assets/images/case_legend_crate_1794514881507.jpg',
       itemIds: [
         'card_kiri_chan',
         'card_usaty_vanya',
+        'card_eblany',
         'card_jopa_michaela',
         'card_timur_volga',
+        'card_crazy_artemiy',
         'card_vanya_dripchik',
         'card_tenet_t4',
       ],
-      rarityWeights: { common: 0, rare: 0, epic: 54, legendary: 46 },
+      rarityWeights: { common: 0, rare: 0, super_rare: 0, epic: 52, legendary: 48 },
     },
     {
       id: 'case_custom_artemiy',
       name: 'Артемий на районе',
-      description: 'Авторский кейс с фокусом на зелёную серию Артемия и быстрый разгон банка.',
+      description: 'Авторский кейс с фокусом на серию Артемия (включая Бухого и Сумашедшего Артемия) и разгон банка.',
       price: 450,
       tier: 'rare',
       imageUrl: '/src/assets/images/case_epic_crate_1794514882592.jpg',
-      itemIds: ['card_artemiy_daun', 'card_hustler_artemiy', 'card_down_timur', 'card_usaty_vanya'],
-      rarityWeights: { common: 0, rare: 74, epic: 26, legendary: 0 },
+      itemIds: [
+        'card_artemiy_daun',
+        'card_hustler_artemiy',
+        'card_spy_michael',
+        'card_down_timur',
+        'card_drunk_artemiy',
+        'card_usaty_vanya',
+        'card_crazy_artemiy',
+      ],
+      rarityWeights: { common: 0, rare: 58, super_rare: 12, epic: 26, legendary: 4 },
     },
     {
       id: 'case_custom_timur',
       name: 'Закат на Волге',
-      description: 'Авторская охота за золотой картой «Тимур на Волге» с эпическим прикрытием.',
+      description: 'Авторская охота за золотыми картами «Фотограф Тимур» и «Тимур на Волге» с эпическим прикрытием.',
       price: 1950,
       tier: 'epic',
       imageUrl: '/src/assets/images/case_legend_crate_1794514881507.jpg',
-      itemIds: ['card_hustler_artemiy', 'card_down_timur', 'card_jopa_michaela', 'card_timur_volga'],
-      rarityWeights: { common: 0, rare: 26, epic: 54, legendary: 20 },
+      itemIds: [
+        'card_hustler_artemiy',
+        'card_down_timur',
+        'card_hunchback_timur',
+        'card_jopa_michaela',
+        'card_photographer_timur',
+        'card_timur_volga',
+      ],
+      rarityWeights: { common: 0, rare: 22, super_rare: 0, epic: 54, legendary: 24 },
     },
     {
       id: 'case_custom_purple',
       name: 'Фиолетовый вайб',
-      description: 'Концентрированный эпик-кейс: Даун Тимур, Кири-тян, Усатый Ваня и Жопа Майкла.',
+      description: 'Концентрированный эпик-кейс: 4Б, Бухой Артемий, Горбатый Тимур, Ебланы и вся фиолетовая элита.',
       price: 1750,
       tier: 'epic',
       imageUrl: '/src/assets/images/case_epic_crate_1794514882592.jpg',
       itemIds: [
         'card_hustler_artemiy',
         'card_down_timur',
+        'card_drunk_artemiy',
         'card_kiri_chan',
+        'card_class_4b',
+        'card_hunchback_timur',
         'card_usaty_vanya',
+        'card_eblany',
         'card_jopa_michaela',
       ],
-      rarityWeights: { common: 0, rare: 20, epic: 80, legendary: 0 },
+      rarityWeights: { common: 0, rare: 15, super_rare: 0, epic: 85, legendary: 0 },
     },
     {
       id: 'case_custom_vanya',
       name: 'Секрет Вани (EZ)',
-      description: 'Ультра-рисковый авторский кейс с повышенным шансом выбить Ваню Дрипчика.',
+      description: 'Ультра-рисковый авторский кейс с повышенным шансом выбить Ваню Дрипчика и Сумашедшего Артемия.',
       price: 4200,
       tier: 'legendary',
       imageUrl: '/src/assets/images/case_legend_crate_1794514881507.jpg',
-      itemIds: ['card_kiri_chan', 'card_usaty_vanya', 'card_timur_volga', 'card_vanya_dripchik'],
-      rarityWeights: { common: 0, rare: 0, epic: 62, legendary: 38 },
+      itemIds: [
+        'card_kiri_chan',
+        'card_class_4b',
+        'card_usaty_vanya',
+        'card_timur_volga',
+        'card_crazy_artemiy',
+        'card_vanya_dripchik',
+      ],
+      rarityWeights: { common: 0, rare: 0, super_rare: 0, epic: 60, legendary: 40 },
     },
     {
       id: 'case_custom_oligarch',
       name: 'Золотой Олимп',
-      description: 'Высокие ставки ради топового автопарка TENET T4 и всей золотой коллекции.',
+      description: 'Высокие ставки ради топового автопарка TENET T4 и всей золотой коллекции легендарных карт.',
       price: 6800,
       tier: 'legendary',
       imageUrl: '/src/assets/images/case_legend_crate_1794514881507.jpg',
       itemIds: [
         'card_usaty_vanya',
         'card_jopa_michaela',
+        'card_photographer_timur',
         'card_timur_volga',
+        'card_crazy_artemiy',
         'card_vanya_dripchik',
         'card_tenet_t4',
       ],
-      rarityWeights: { common: 0, rare: 0, epic: 45, legendary: 55 },
+      rarityWeights: { common: 0, rare: 0, super_rare: 0, epic: 42, legendary: 58 },
     },
   ];
 
@@ -384,6 +585,8 @@ function createInitialDb(): DatabaseSchema {
     totalUpgrades: 2,
     wonUpgrades: 1,
     totalCasesOpened: 1,
+    xp: 350,
+    unlockedItemIds: ['card_artemiy_daun', 'card_hustler_artemiy', 'card_down_timur'],
     inventory: [
       { instanceId: 'inv_seed_1', itemId: 'card_artemiy_daun', acquiredAt: now - 3600000 * 5, source: 'starter' },
       { instanceId: 'inv_seed_2', itemId: 'card_hustler_artemiy', acquiredAt: now - 3600000 * 4, source: 'starter' },
@@ -411,6 +614,8 @@ function createInitialDb(): DatabaseSchema {
     totalUpgrades: 4,
     wonUpgrades: 2,
     totalCasesOpened: 3,
+    xp: 250,
+    unlockedItemIds: ['card_usaty_vanya'],
     inventory: [
       { instanceId: 'inv_seed_4', itemId: 'card_usaty_vanya', acquiredAt: now - 3600000 * 2, source: 'upgrade' },
     ],
@@ -525,17 +730,26 @@ function normalizeStoredDb(value: unknown): DatabaseSchema {
   const loadedUpgradeHistory = Array.isArray(parsed.upgradeHistory) ? parsed.upgradeHistory.filter((entry) =>
     entry.userId !== 'user_playerone' && entry.userId !== 'user_vanya_fan'
   ) : [];
+  const activeItems = Array.isArray(parsed.items) ? parsed.items : seed.items;
   const normalizedUsers = existingUsers.map((user) => {
     let friendCode = user.friendCode?.toUpperCase();
     if (!friendCode || usedFriendCodes.has(friendCode)) friendCode = createFriendCode([...existingUsers]);
     usedFriendCodes.add(friendCode);
-    const topDrop = inferTopDrop(user, Array.isArray(parsed.items) ? parsed.items : seed.items, loadedUpgradeHistory, loadedTransactions);
+    const topDrop = inferTopDrop(user, activeItems, loadedUpgradeHistory, loadedTransactions);
+    const unlockedIds = inferUnlockedItemIds(user, activeItems, loadedUpgradeHistory, loadedTransactions);
+    const itemsById = new Map(activeItems.map((it) => [it.id, it]));
+    const minXpFromUnlocked = unlockedIds.reduce(
+      (sum, id) => sum + getCardDiscoveryXp(itemsById.get(id)),
+      0
+    );
     return {
       ...user,
       friendCode,
       friends: Array.isArray(user.friends) ? user.friends : [],
       topDropItemId: user.topDropItemId || topDrop?.id || null,
       topDropPrice: Math.max(Number(user.topDropPrice) || 0, topDrop?.price ?? 0),
+      unlockedItemIds: unlockedIds,
+      xp: Math.max(Math.round(Number(user.xp) || 0), minXpFromUnlocked),
     };
   });
   const normalized: DatabaseSchema = {
@@ -557,7 +771,99 @@ function normalizeStoredDb(value: unknown): DatabaseSchema {
     consumedTelegramHashes: Array.isArray(parsed.consumedTelegramHashes) ? parsed.consumedTelegramHashes : [],
   };
 
-  if ((parsed.economyVersion ?? 0) < 2) {
+  const DEPRECATED_DUPLICATE_IDS = new Set(['card_spy_michael_epic']);
+
+  if ((parsed.catalogVersion ?? 0) < 4) {
+    const seedItemsById = new Map(seed.items.map((seedItem) => [seedItem.id, seedItem]));
+    normalized.items = normalized.items
+      .filter((item) => !DEPRECATED_DUPLICATE_IDS.has(item.id))
+      .map((item) => {
+        const seedMatch = seedItemsById.get(item.id);
+        if (seedMatch) {
+          return {
+            ...item,
+            name: seedMatch.name,
+            rarity: seedMatch.rarity,
+            collection: seedMatch.collection ?? inferCardCollection(seedMatch.name),
+            price: seedMatch.price,
+            imageUrl: seedMatch.imageUrl,
+          };
+        }
+        return {
+          ...item,
+          collection: item.collection?.trim() || inferCardCollection(item.name),
+        };
+      });
+
+    const existingItemIds = new Set(normalized.items.map((item) => item.id));
+    for (const seedItem of seed.items) {
+      if (!existingItemIds.has(seedItem.id)) {
+        normalized.items.push(seedItem);
+        existingItemIds.add(seedItem.id);
+      }
+    }
+
+    const seedCasesById = new Map(seed.cases.map((seedCase) => [seedCase.id, seedCase]));
+    normalized.cases = normalized.cases.map((caseBox) => {
+      const matchingSeed = seedCasesById.get(caseBox.id);
+      if (matchingSeed) {
+        return {
+          ...matchingSeed,
+          rarityWeights: { ...matchingSeed.rarityWeights },
+        };
+      }
+      return {
+        ...caseBox,
+        itemIds: caseBox.itemIds.filter((id) => !DEPRECATED_DUPLICATE_IDS.has(id)),
+      };
+    });
+
+    const existingCaseIds = new Set(normalized.cases.map((caseBox) => caseBox.id));
+    for (const seedCase of seed.cases) {
+      if (!existingCaseIds.has(seedCase.id)) {
+        const idx = seedCase.id === 'case_spy_cobalt' ? 2 : normalized.cases.length;
+        normalized.cases.splice(Math.min(idx, normalized.cases.length), 0, seedCase);
+        existingCaseIds.add(seedCase.id);
+      }
+    }
+
+    normalized.users = normalized.users.map((user) => {
+      const cleanedInventory = user.inventory.filter((inv) => !DEPRECATED_DUPLICATE_IDS.has(inv.itemId));
+      const needsTopDropRecompute = user.topDropItemId && DEPRECATED_DUPLICATE_IDS.has(user.topDropItemId);
+      const nextTopDrop = needsTopDropRecompute
+        ? inferTopDrop({ ...user, inventory: cleanedInventory }, normalized.items, normalized.upgradeHistory, normalized.transactions)
+        : null;
+      const unlockedIds = inferUnlockedItemIds(
+        { ...user, inventory: cleanedInventory },
+        normalized.items,
+        normalized.upgradeHistory,
+        normalized.transactions,
+        DEPRECATED_DUPLICATE_IDS
+      );
+      const itemsById = new Map(normalized.items.map((it) => [it.id, it]));
+      const minXp = unlockedIds.reduce((sum, id) => sum + getCardDiscoveryXp(itemsById.get(id)), 0);
+      return {
+        ...user,
+        inventory: cleanedInventory,
+        unlockedItemIds: unlockedIds,
+        xp: Math.max(Math.round(Number(user.xp) || 0), minXp),
+        topDropItemId: needsTopDropRecompute ? (nextTopDrop?.id ?? null) : user.topDropItemId,
+        topDropPrice: needsTopDropRecompute ? (nextTopDrop?.price ?? 0) : user.topDropPrice,
+      };
+    });
+
+    normalized.liveDrops = normalized.liveDrops.filter((drop) => !DEPRECATED_DUPLICATE_IDS.has(drop.itemId));
+    normalized.upgradeHistory = normalized.upgradeHistory.filter((entry) => !DEPRECATED_DUPLICATE_IDS.has(entry.targetItemId));
+    normalized.catalogVersion = 4;
+    normalized.economyVersion = 3;
+  } else {
+    normalized.items = normalized.items.map((item) => ({
+      ...item,
+      collection: item.collection?.trim() || inferCardCollection(item.name),
+    }));
+  }
+
+  if ((parsed.economyVersion ?? 0) < 3 || (parsed.catalogVersion ?? 0) < 4) {
     for (const caseBox of normalized.cases) {
       const caseItems = caseBox.itemIds
         .map((id) => normalized.items.find((item) => item.id === id))
@@ -565,7 +871,7 @@ function normalizeStoredDb(value: unknown): DatabaseSchema {
       const fairPrice = recommendedCasePrice(calculateCaseExpectedValue(caseBox, caseItems));
       if (fairPrice > 0) caseBox.price = fairPrice;
     }
-    normalized.economyVersion = 2;
+    normalized.economyVersion = 3;
   }
   return normalized;
 }
@@ -925,6 +1231,8 @@ function buildPayload(userId?: string, authenticated = Boolean(userId)): Bootstr
     totalUpgrades: 0,
     wonUpgrades: 0,
     totalCasesOpened: 0,
+    xp: 0,
+    unlockedItemIds: [],
     inventory: [],
     createdAt: Date.now(),
   } satisfies UserProfile;
@@ -1125,6 +1433,8 @@ function upsertTelegramUser(params: {
       totalUpgrades: 0,
       wonUpgrades: 0,
       totalCasesOpened: 0,
+      xp: getCardDiscoveryXp(db.items.find((it) => it.id === 'card_artemiy_daun')),
+      unlockedItemIds: ['card_artemiy_daun'],
       inventory: [
         { instanceId: uid('inv'), itemId: 'card_artemiy_daun', acquiredAt: Date.now(), source: 'starter' },
       ],
@@ -1480,7 +1790,9 @@ async function startServer() {
       const giveDrops = (recipient: UserProfile, drops: ItemCard[]) => {
         for (const item of drops) {
           const inventory: InventoryItem = { instanceId: uid('inv'), itemId: item.id, acquiredAt: Date.now(), source: 'battle' };
-          recipient.inventory.push(inventory); awarded.push(inventory); noteTopDrop(recipient, item); pushLiveDrop(recipient.username, item.id, 'case');
+          recipient.inventory.push(inventory); awarded.push(inventory);
+          grantCardDiscovery(recipient, item.id);
+          noteTopDrop(recipient, item); pushLiveDrop(recipient.username, item.id, 'case');
           (awardedByUser[recipient.id] ??= []).push(inventory.instanceId);
         }
       };
@@ -1502,6 +1814,7 @@ async function startServer() {
       for (const inventory of items) {
         const won = { ...inventory, source: 'battle' as const };
         winner.inventory.push(won); awarded.push(won);
+        grantCardDiscovery(winner, won.itemId);
         (awardedByUser[winner.id] ??= []).push(won.instanceId);
         const card = db.items.find((item) => item.id === won.itemId); if (card) noteTopDrop(winner, card);
       }
@@ -1781,6 +2094,7 @@ async function startServer() {
 
     user.totalUpgrades += 1;
     let wonInstance: InventoryItem | null = null;
+    let xpGained = 0;
     if (won) {
       user.wonUpgrades += 1;
       wonInstance = {
@@ -1790,6 +2104,7 @@ async function startServer() {
         source: 'upgrade',
       };
       user.inventory.unshift(wonInstance);
+      xpGained = grantCardDiscovery(user, targetItem.id);
       noteTopDrop(user, targetItem);
       pushLiveDrop(user.username, targetItem.id, 'upgrade', odds.multiplier);
     }
@@ -1820,6 +2135,7 @@ async function startServer() {
         odds,
         targetItem,
         wonInstance,
+        xpGained,
       },
     });
   });
@@ -1859,6 +2175,7 @@ async function startServer() {
       source: 'case',
     };
     user.inventory.unshift(wonInstance);
+    const xpGained = grantCardDiscovery(user, wonItem.id);
     noteTopDrop(user, wonItem);
 
     recordTx(user, 'case_open', -caseBox.price, `Открытие кейса «${caseBox.name}»`, `Выпал: ${wonItem.name}`);
@@ -1871,23 +2188,26 @@ async function startServer() {
         item: wonItem,
         instance: wonInstance,
         probabilities: probs,
+        xpGained,
       },
     });
   });
 
   app.post('/api/admin/items', (req, res) => {
     if (!adminUser(req, res)) return;
-    const { name, rarity, price, imageUrl, caseIds } = req.body as {
+    const { name, rarity, collection, price, imageUrl, caseIds } = req.body as {
       name?: string;
       rarity?: Rarity;
+      collection?: string;
       price?: number;
       imageUrl?: string;
       caseIds?: string[];
     };
 
     const cleanName = (name ?? '').trim();
+    const cleanCollection = (collection ?? '').trim() || inferCardCollection(cleanName);
     const numPrice = Math.round(Number(price ?? 0));
-    const validRarities: Rarity[] = ['common', 'rare', 'epic', 'legendary'];
+    const validRarities: Rarity[] = ['common', 'rare', 'super_rare', 'epic', 'legendary'];
 
     if (!cleanName || cleanName.length < 2) {
       res.status(400).json({ error: 'Укажите название карты (минимум 2 символа).' });
@@ -1903,8 +2223,9 @@ async function startServer() {
     }
     const rarityPriceBounds: Record<Rarity, [number, number]> = {
       common: [50, 299],
-      rare: [300, 999],
-      epic: [1000, 4999],
+      rare: [300, 799],
+      super_rare: [800, 1499],
+      epic: [1500, 4999],
       legendary: [5000, 250000],
     };
     const [minRarityPrice, maxRarityPrice] = rarityPriceBounds[rarity];
@@ -1922,6 +2243,7 @@ async function startServer() {
       id: uid('card'),
       name: cleanName,
       rarity,
+      collection: cleanCollection,
       price: numPrice,
       imageUrl: storedImage,
       createdAt: Date.now(),
@@ -1967,6 +2289,7 @@ async function startServer() {
     db.cases = db.cases.filter((caseBox) => caseBox.itemIds.length >= 2);
     for (const u of db.users) {
       u.inventory = u.inventory.filter((inv) => inv.itemId !== id);
+      u.unlockedItemIds = (u.unlockedItemIds ?? []).filter((unlockedId) => unlockedId !== id);
     }
     saveDb();
     res.json({ items: db.items, cases: db.cases });
@@ -1987,6 +2310,7 @@ async function startServer() {
       acquiredAt: Date.now(),
       source: 'admin',
     });
+    grantCardDiscovery(user, item.id);
     saveDb();
     res.json({ payload: buildPayload(user.id) });
   });
@@ -2018,13 +2342,13 @@ async function startServer() {
       res.status(400).json({ error: 'Кейс содержит карточку, которой нет в каталоге.' });
       return;
     }
-    const weights = rarityWeights ?? { common: 40, rare: 35, epic: 20, legendary: 5 };
-    const validTiers: Rarity[] = ['common', 'rare', 'epic', 'legendary'];
+    const weights = rarityWeights ?? { common: 35, rare: 30, super_rare: 15, epic: 15, legendary: 5 };
+    const validTiers: Rarity[] = ['common', 'rare', 'super_rare', 'epic', 'legendary'];
     if (!validTiers.includes(tier ?? 'epic')) {
       res.status(400).json({ error: 'Выберите допустимый уровень кейса.' });
       return;
     }
-    const weightValues = ['common', 'rare', 'epic', 'legendary'].map((rarity) => Number(weights[rarity as Rarity] ?? 0));
+    const weightValues = ['common', 'rare', 'super_rare', 'epic', 'legendary'].map((rarity) => Number(weights[rarity as Rarity] ?? 0));
     if (weightValues.some((weight) => !Number.isFinite(weight) || weight < 0) || weightValues.reduce((a, b) => a + b, 0) <= 0) {
       res.status(400).json({ error: 'Шансы редкостей должны быть неотрицательными числами с общей суммой больше нуля.' });
       return;

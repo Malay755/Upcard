@@ -2,6 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { Coins, Sparkles } from 'lucide-react';
 import type { ItemCard } from '../types';
+import { getCollectionTextClass, resolveCardCollection } from '../utils/collections';
 import { formatTC } from '../utils/economics';
 import { CardFrame } from './CardFrame';
 
@@ -112,7 +113,12 @@ export const LegendaryRevealModal: React.FC<LegendaryRevealModalProps> = ({
             <Sparkles className="w-4 h-4" />
             <span>Легендарное выпадение</span>
           </div>
-          <p className="text-xs text-slate-400">{sourceLabel}</p>
+          <p className="text-xs text-slate-400">
+            {sourceLabel} ·{' '}
+            <span className={getCollectionTextClass(resolveCardCollection(item))}>
+              Коллекция «{resolveCardCollection(item)}»
+            </span>
+          </p>
         </div>
 
         {/* Smooth 60-120fps Continuous 3D Double-Sided Card Stage */}

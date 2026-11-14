@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react';
 import { Crown, Sparkles } from 'lucide-react';
 import type { ItemCard, LiveDropEntry } from '../types';
+import { getCollectionTextClass, resolveCardCollection } from '../utils/collections';
 import { formatTC, RARITY_LABELS } from '../utils/economics';
 import { resolveAssetUrl } from '../utils/assets';
 
@@ -12,6 +13,7 @@ interface TopDropsSidebarProps {
 const rarityStyle: Record<ItemCard['rarity'], string> = {
   common: 'border-slate-400/40 bg-slate-400/10 text-slate-300',
   rare: 'border-emerald-400/40 bg-emerald-400/10 text-emerald-300',
+  super_rare: 'border-sky-400/40 bg-sky-400/10 text-sky-300',
   epic: 'border-purple-400/40 bg-purple-400/10 text-purple-300',
   legendary: 'border-amber-300/50 bg-amber-300/10 text-amber-200',
 };
@@ -77,6 +79,9 @@ export const TopDropsSidebar: React.FC<TopDropsSidebarProps> = ({ liveDrops, ite
                   <span className="shrink-0 text-[11px] font-bold tabular-nums text-amber-200">{formatTC(item.price)} TC</span>
                 </div>
                 <div className="text-[9px] uppercase tracking-wide opacity-80">{RARITY_LABELS[item.rarity]}</div>
+                <div className={`text-[9px] font-medium truncate ${getCollectionTextClass(resolveCardCollection(item))}`}>
+                  Коллекция: {resolveCardCollection(item)}
+                </div>
               </div>
             </article>
           ))}

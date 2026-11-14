@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Copy, Crown, ExternalLink, Users, UserMinus, UserPlus, X, Coins, LayoutGrid, ShieldCheck } from 'lucide-react';
+import { BookOpen, Copy, Crown, ExternalLink, Trophy, Users, UserMinus, UserPlus, X, Coins, LayoutGrid, ShieldCheck } from 'lucide-react';
 import type {
   BootstrapPayload,
   FriendProfile,
@@ -12,8 +12,11 @@ import type {
 } from '../types';
 import { resolveAssetUrl } from '../utils/assets';
 import { useCleanCardImage } from '../utils/cardCutout';
+import { getCollectionTextClass, resolveCardCollection } from '../utils/collections';
 import { formatTC, RARITY_LABELS } from '../utils/economics';
+import { getLevelProgress } from '../utils/progression';
 import { soundFX } from '../utils/sound';
+import { CollectionDiaryView } from './CollectionDiaryView';
 import { TelegramPaperPlaneIcon } from './TelegramLoginModal';
 import { GoatLogo } from './GoatLogo';
 
@@ -54,6 +57,7 @@ const TX_LABELS: Record<TransactionType, string> = {
 const RARITY_TILE_ACCENT: Record<Rarity, { bar: string; glow: string }> = {
   common: { bar: 'bg-slate-400', glow: 'from-slate-400/15' },
   rare: { bar: 'bg-emerald-400', glow: 'from-emerald-500/20' },
+  super_rare: { bar: 'bg-sky-400', glow: 'from-sky-500/20' },
   epic: { bar: 'bg-purple-400', glow: 'from-purple-500/20' },
   legendary: { bar: 'bg-[#FACC15]', glow: 'from-amber-400/25' },
 };
@@ -64,6 +68,7 @@ const ProfileInventoryTile: React.FC<{
 }> = ({ item, onSell }) => {
   const { displayUrl } = useCleanCardImage(resolveAssetUrl(item.imageUrl));
   const style = RARITY_TILE_ACCENT[item.rarity] ?? RARITY_TILE_ACCENT.common;
+  const collection = resolveCardCollection(item);
 
   return (
     <div
@@ -71,14 +76,19 @@ const ProfileInventoryTile: React.FC<{
     >
       <span aria-hidden="true" className={`absolute top-0 inset-x-0 h-[2px] ${style.bar}`} />
 
-      <div className="relative z-10 flex items-center justify-between gap-1">
+      <div className="relative z-10 flex items-start justify-between gap-1">
         <span className="inline-flex items-center gap-1 text-[11px] font-mono-num font-bold text-[#FACC15]">
           <span>{formatTC(item.price)}</span>
           <span className="w-2.5 h-2.5 rounded-full bg-[#FACC15] text-[#0B0D10] text-[7px] font-black inline-flex items-center justify-center">
             T
           </span>
         </span>
-        <span className="text-[9px] text-slate-400">{RARITY_LABELS[item.rarity]}</span>
+        <div className="text-right leading-tight">
+          <div className="text-[9px] text-slate-400">{RARITY_LABELS[item.rarity]}</div>
+          <div className={`text-[9px] font-medium ${getCollectionTextClass(collection)}`}>
+            {collection}
+          </div>
+        </div>
       </div>
 
       <div className="relative flex items-center justify-center my-2 h-24">
@@ -126,6 +136,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   onRemoveFriend,
   onGetFriendProfile,
 }) => {
+  const [showDiary, setShowDiary] = useState(false);
   const [historyTab, setHistoryTab] = useState<'ledger' | 'upgrades'>('ledger');
   const [friendCodeInput, setFriendCodeInput] = useState('');
   const [friendMessage, setFriendMessage] = useState('');
@@ -133,6 +144,19 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const [selectedFriend, setSelectedFriend] = useState<FriendProfile | null>(null);
 
   const itemsMap = useMemo(() => new Map(items.map((it) => [it.id, it])), [items]);
+
+  const unlockedItemIds = useMemo(() => {
+    const ids = new Set(user.unlockedItemIds ?? []);
+    for (const inv of user.inventory) ids.add(inv.itemId);
+    return [...ids];
+  }, [user.unlockedItemIds, user.inventory]);
+
+  const unlockedCount = useMemo(
+    () => items.filter((item) => unlockedItemIds.includes(item.id)).length,
+    [items, unlockedItemIds]
+  );
+
+  const levelInfo = useMemo(() => getLevelProgress(user.xp ?? 0), [user.xp]);
 
   const inventoryEntries = useMemo(() => {
     return user.inventory
@@ -201,6 +225,19 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     }
   };
 
+  if (showDiary) {
+    return (
+      <CollectionDiaryView
+        items={items}
+        unlockedItemIds={unlockedItemIds}
+        totalXp={user.xp ?? 0}
+        isAuthorized={isAuthorized}
+        onBack={() => setShowDiary(false)}
+        onOpenTelegramLogin={onOpenTelegramLogin}
+      />
+    );
+  }
+
   // Unauthorized Telegram gate matching Upgrader inventory panel
   if (!isAuthorized) {
     return (
@@ -222,17 +259,28 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
           <div className="space-y-1.5">
             <h2 className="text-lg font-display font-bold text-white">You are not authorized</h2>
             <p className="text-xs text-slate-400">
-              Войдите через Telegram, чтобы открыть личный профиль, статистику, инвентарь и интеграцию с ботом
+              Войдите через Telegram, чтобы открыть личный профиль, уровень, опыт, инвентарь и интеграцию с ботом
             </p>
           </div>
-          <button
-            type="button"
-            onClick={onOpenTelegramLogin}
-            className="inline-flex items-center gap-2.5 px-7 py-2.5 rounded-full bg-[#FACC15] hover:bg-[#FDE047] text-[#0B0D10] font-display font-bold text-xs transition-all cursor-pointer shadow-[0_0_24px_rgba(250,204,21,0.2)]"
-          >
-            <span>Login via Telegram</span>
-            <TelegramPaperPlaneIcon className="w-4 h-4" />
-          </button>
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-2.5 pt-1">
+            <button
+              type="button"
+              onClick={onOpenTelegramLogin}
+              className="inline-flex items-center gap-2.5 px-7 py-2.5 rounded-full bg-[#FACC15] hover:bg-[#FDE047] text-[#0B0D10] font-display font-bold text-xs transition-all cursor-pointer shadow-[0_0_24px_rgba(250,204,21,0.2)]"
+            >
+              <span>Login via Telegram</span>
+              <TelegramPaperPlaneIcon className="w-4 h-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowDiary(true)}
+              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-[#0D0F12] hover:bg-white/[0.06] border border-white/[0.1] text-slate-200 font-display font-semibold text-xs transition-colors cursor-pointer"
+            >
+              <BookOpen className="w-4 h-4 text-[#FACC15]" />
+              <span>Коллекционный дневник</span>
+              <span className="text-[11px] font-mono-num text-slate-400">0/{items.length}</span>
+            </button>
+          </div>
         </section>
       </div>
     );
@@ -292,6 +340,74 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             </div>
           </div>
 
+          <button
+            type="button"
+            onClick={() => setShowDiary(true)}
+            className="inline-flex items-center justify-between sm:justify-center gap-3 px-4 py-2.5 rounded-xl bg-[#0D0F12] hover:bg-[#191D24] border border-[#FACC15]/30 hover:border-[#FACC15]/60 transition-all cursor-pointer shrink-0"
+          >
+            <span className="inline-flex items-center gap-2 text-xs font-display font-bold text-white">
+              <BookOpen className="w-4 h-4 text-[#FACC15]" />
+              <span>Коллекционный дневник</span>
+            </span>
+            <span className="px-2 py-0.5 rounded-md bg-[#FACC15]/15 text-[#FACC15] text-[11px] font-mono-num font-bold">
+              {unlockedCount} / {items.length}
+            </span>
+          </button>
+        </div>
+
+        {/* Player Level & XP Progress Bar */}
+        <div
+          data-testid="profile-level-bar"
+          className="mt-5 rounded-xl bg-[#0D0F12] border border-white/[0.06] p-4 space-y-2.5"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2.5">
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#FACC15] text-[#0B0D10] font-display font-black text-xs">
+                <Trophy className="w-3.5 h-3.5" />
+                Уровень {levelInfo.level}
+              </span>
+              <span className="text-sm font-display font-bold text-white">{levelInfo.title}</span>
+            </div>
+
+            <div className="flex items-center gap-3 text-xs font-mono-num">
+              <span className="text-slate-400">
+                Всего: <span className="text-white font-semibold">{levelInfo.totalXp} XP</span>
+              </span>
+              <span className="text-slate-300">
+                <span className="text-[#FACC15] font-bold">{levelInfo.currentLevelXp}</span> /{' '}
+                {levelInfo.nextLevelXp} XP
+              </span>
+            </div>
+          </div>
+
+          <div
+            role="progressbar"
+            aria-label="Шкала уровня и опыта профиля"
+            aria-valuemin={0}
+            aria-valuemax={levelInfo.nextLevelXp}
+            aria-valuenow={levelInfo.currentLevelXp}
+            className="w-full h-2.5 rounded-full bg-white/[0.05] overflow-hidden"
+          >
+            <div
+              className="h-full rounded-full bg-gradient-to-r from-[#EAB308] via-[#FACC15] to-[#FEF08A] transition-all duration-500"
+              style={{ width: `${levelInfo.progressPercent}%` }}
+            />
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-400">
+            <span>
+              До уровня {levelInfo.level + 1}:{' '}
+              <span className="text-slate-200 font-mono-num font-semibold">
+                {Math.max(0, levelInfo.nextLevelXp - levelInfo.currentLevelXp)} XP
+              </span>
+            </span>
+            <span>
+              Открыто в дневнике:{' '}
+              <span className="text-[#FACC15] font-mono-num font-semibold">
+                {unlockedCount} / {items.length} карт
+              </span>
+            </span>
+          </div>
         </div>
 
         <div className="grid grid-cols-2 md:grid-cols-3 2xl:grid-cols-5 gap-3 mt-5 pt-5 border-t border-white/[0.06]">

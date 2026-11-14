@@ -280,6 +280,7 @@ export default function App() {
       drop: {
         item: BootstrapPayload['items'][number];
         instance: BootstrapPayload['user']['inventory'][number];
+        xpGained?: number;
       };
     }>('/api/cases/open', {
       method: 'POST',
@@ -361,6 +362,7 @@ export default function App() {
   const handleCreateItem = async (data: {
     name: string;
     rarity: Rarity;
+    collection?: string;
     price: number;
     imageUrl: string;
     caseIds: string[];

@@ -256,17 +256,29 @@ function processCardCutout(src: string): Promise<string> {
   return promise;
 }
 
+function isPreUnifiedCardAsset(src: string): boolean {
+  return src.includes('/assets/cards/') || src.startsWith('assets/cards/');
+}
+
 /**
  * Strips baked dark checkerboard borders and crops tight around finished card PNGs.
  * Results are cached globally so repeated renders (grids, roulettes, modals) are instant.
+ * Pre-unified `/assets/cards/` PNGs already ship with transparent alpha and uniform 640x880 framing.
  */
 export function useCleanCardImage(src: string): { displayUrl: string; ready: boolean } {
-  const [cutUrl, setCutUrl] = useState<string>(() => cutoutCache.get(src) ?? src);
-  const [ready, setReady] = useState<boolean>(() => !src || cutoutCache.has(src));
+  const preUnified = Boolean(src) && isPreUnifiedCardAsset(src);
+  const [cutUrl, setCutUrl] = useState<string>(() => (preUnified ? src : cutoutCache.get(src) ?? src));
+  const [ready, setReady] = useState<boolean>(() => !src || preUnified || cutoutCache.has(src));
 
   useEffect(() => {
     if (!src) {
       setCutUrl('');
+      setReady(true);
+      return;
+    }
+
+    if (isPreUnifiedCardAsset(src)) {
+      setCutUrl(src);
       setReady(true);
       return;
     }

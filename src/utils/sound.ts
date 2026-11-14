@@ -272,6 +272,7 @@ class SoundEngine {
     const notesByRarity: Record<Rarity, number[]> = {
       common: [587.33, 880],
       rare: [523.25, 659.25, 1046.5],
+      super_rare: [587.33, 739.99, 1174.66],
       epic: [440, 659.25, 880, 1318.5],
       legendary: [587.33, 880, 1174.66, 1479.98],
     };

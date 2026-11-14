@@ -11,6 +11,7 @@ import {
 import type { CaseBox, InventoryItem, ItemCard, Rarity, UserProfile } from '../types';
 import { resolveAssetUrl } from '../utils/assets';
 import { useCleanCardImage } from '../utils/cardCutout';
+import { getCollectionTextClass, resolveCardCollection } from '../utils/collections';
 import { calculateCaseDropProbabilities, formatTC, RARITY_LABELS } from '../utils/economics';
 import { soundFX } from '../utils/sound';
 import { CardFrame } from './CardFrame';
@@ -30,6 +31,7 @@ interface CasesViewProps {
   onOpenCase: (caseId: string) => Promise<{
     item: ItemCard;
     instance: InventoryItem;
+    xpGained?: number;
   }>;
   onSellItems: (instanceIds: string[]) => Promise<void>;
   onOpenDeposit: () => void;
@@ -40,6 +42,7 @@ const CARD_SLOT_WIDTH = 144;
 const RARITY_TILE_ACCENT: Record<Rarity, { bar: string; glow: string }> = {
   common: { bar: 'bg-slate-400', glow: 'from-slate-400/15' },
   rare: { bar: 'bg-emerald-400', glow: 'from-emerald-500/20' },
+  super_rare: { bar: 'bg-sky-400', glow: 'from-sky-500/20' },
   epic: { bar: 'bg-purple-400', glow: 'from-purple-500/20' },
   legendary: { bar: 'bg-[#FACC15]', glow: 'from-amber-400/25' },
 };
@@ -54,6 +57,11 @@ const STAGE_GLOW_BY_TIER: Record<Rarity, { backgroundImage: string; borderClass:
     backgroundImage:
       'radial-gradient(ellipse 75% 55% at 50% 34%, rgba(16, 185, 129, 0.2) 0%, rgba(20, 22, 26, 0.96) 72%), linear-gradient(180deg, #10231C 0%, #14161A 100%)',
     borderClass: 'border-emerald-400/25',
+  },
+  super_rare: {
+    backgroundImage:
+      'radial-gradient(ellipse 75% 55% at 50% 34%, rgba(56, 189, 248, 0.22) 0%, rgba(20, 22, 26, 0.96) 72%), linear-gradient(180deg, #101E2B 0%, #14161A 100%)',
+    borderClass: 'border-sky-400/25',
   },
   epic: {
     backgroundImage:
@@ -70,6 +78,7 @@ const STAGE_GLOW_BY_TIER: Record<Rarity, { backgroundImage: string; borderClass:
 const RISK_LABEL_BY_TIER: Record<Rarity, { label: string; textClass: string }> = {
   common: { label: 'LOW', textClass: 'text-slate-300' },
   rare: { label: 'MEDIUM', textClass: 'text-emerald-400' },
+  super_rare: { label: 'RARE+', textClass: 'text-sky-400' },
   epic: { label: 'HIGH', textClass: 'text-purple-400' },
   legendary: { label: 'VIP', textClass: 'text-[#FACC15]' },
 };
@@ -80,10 +89,11 @@ const CompactDropItemTile: React.FC<{ item: ItemCard; probability: number }> = (
 }) => {
   const { displayUrl } = useCleanCardImage(resolveAssetUrl(item.imageUrl));
   const style = RARITY_TILE_ACCENT[item.rarity] ?? RARITY_TILE_ACCENT.common;
+  const collection = resolveCardCollection(item);
 
   return (
     <div
-      className={`relative rounded-xl overflow-hidden border border-white/[0.06] p-3 flex flex-col justify-between h-[164px] bg-gradient-to-b ${style.glow} via-[#181B22] to-[#121419]`}
+      className={`relative rounded-xl overflow-hidden border border-white/[0.06] p-3 flex flex-col justify-between h-[178px] bg-gradient-to-b ${style.glow} via-[#181B22] to-[#121419]`}
     >
       <span aria-hidden="true" className={`absolute top-0 inset-x-0 h-[2px] ${style.bar}`} />
 
@@ -116,6 +126,9 @@ const CompactDropItemTile: React.FC<{ item: ItemCard; probability: number }> = (
       <div className="relative z-10 text-center">
         <div className="text-[11px] font-bold text-white truncate">{item.name}</div>
         <div className="text-[9px] text-slate-400 truncate">{RARITY_LABELS[item.rarity]}</div>
+        <div className={`text-[9px] font-medium truncate ${getCollectionTextClass(collection)}`}>
+          Коллекция: {collection}
+        </div>
       </div>
     </div>
   );
@@ -141,7 +154,7 @@ export const CasesView: React.FC<CasesViewProps> = ({
   const [isOpening, setIsOpening] = useState(false);
   const [stageEntryKey, setStageEntryKey] = useState(0);
   const [tapeItems, setTapeItems] = useState<ItemCard[]>([]);
-  const [wonDrop, setWonDrop] = useState<{ item: ItemCard; instance: InventoryItem } | null>(null);
+  const [wonDrop, setWonDrop] = useState<{ item: ItemCard; instance: InventoryItem; xpGained?: number } | null>(null);
   const [legendaryModalOpen, setLegendaryModalOpen] = useState(false);
   const [error, setError] = useState('');
 
@@ -653,15 +666,23 @@ export const CasesView: React.FC<CasesViewProps> = ({
               <div className="flex items-center gap-4">
                 <CardFrame item={wonDrop.item} size="xs" showPrice={false} />
                 <div>
-                  <div className="flex items-center gap-1.5 text-xs font-semibold text-[#FACC15]">
-                    <CheckCircle2 className="w-4 h-4" />
-                    <span>Выпала карточка!</span>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="flex items-center gap-1.5 text-xs font-semibold text-[#FACC15]">
+                      <CheckCircle2 className="w-4 h-4" />
+                      <span>Выпала карточка!</span>
+                    </div>
+                    {Boolean(wonDrop.xpGained && wonDrop.xpGained > 0) && (
+                      <span className="px-2 py-0.5 rounded bg-emerald-500/15 border border-emerald-400/25 text-[10px] font-mono-num font-bold text-emerald-300">
+                        +{wonDrop.xpGained} XP · Новая в дневнике
+                      </span>
+                    )}
                   </div>
                   <div className="text-base sm:text-lg font-display font-bold text-white mt-0.5">
                     {wonDrop.item.name}
                   </div>
                   <div className="text-xs text-slate-400 font-mono-num">
-                    {RARITY_LABELS[wonDrop.item.rarity]} · Цена {formatTC(wonDrop.item.price)} TC
+                    {RARITY_LABELS[wonDrop.item.rarity]} · Коллекция: {resolveCardCollection(wonDrop.item)} · Цена{' '}
+                    {formatTC(wonDrop.item.price)} TC
                   </div>
                 </div>
               </div>

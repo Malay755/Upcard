@@ -6,13 +6,15 @@ export const CASE_RTP = 0.75; // Cases return 75% of their cost on average befor
 export const RARITY_ORDER: Record<Rarity, number> = {
   common: 1,
   rare: 2,
-  epic: 3,
-  legendary: 4,
+  super_rare: 3,
+  epic: 4,
+  legendary: 5,
 };
 
 export const RARITY_LABELS: Record<Rarity, string> = {
   common: 'Обычная',
   rare: 'Редкая',
+  super_rare: 'Сверхредкая',
   epic: 'Эпическая',
   legendary: 'Легендарная',
 };
@@ -109,6 +111,7 @@ export function calculateCaseDropProbabilities(
   const byRarity: Record<Rarity, ItemCard[]> = {
     common: [],
     rare: [],
+    super_rare: [],
     epic: [],
     legendary: [],
   };
@@ -121,7 +124,7 @@ export function calculateCaseDropProbabilities(
   const rawWeights: { item: ItemCard; weight: number }[] = [];
   let totalWeight = 0;
 
-  for (const rarity of ['common', 'rare', 'epic', 'legendary'] as Rarity[]) {
+  for (const rarity of ['common', 'rare', 'super_rare', 'epic', 'legendary'] as Rarity[]) {
     const tierItems = byRarity[rarity];
     if (tierItems.length === 0) continue;
 

@@ -2,6 +2,12 @@ import React, { useState } from 'react';
 import { CheckCircle2, Gift, Plus, Sparkles, Trash2, Upload } from 'lucide-react';
 import type { CaseBox, ItemCard, Rarity } from '../types';
 import {
+  CANONICAL_COLLECTIONS,
+  getCollectionTextClass,
+  inferCardCollection,
+  resolveCardCollection,
+} from '../utils/collections';
+import {
   calculateCaseExpectedValue,
   formatTC,
   recommendedCasePrice,
@@ -17,6 +23,7 @@ interface AdminViewProps {
   onCreateItem: (data: {
     name: string;
     rarity: Rarity;
+    collection?: string;
     price: number;
     imageUrl: string;
     caseIds: string[];
@@ -44,16 +51,18 @@ const RARITY_OPTIONS: {
   activeBorder: string;
 }[] = [
   { id: 'common', label: 'Обычная (Серая)', minPrice: 50, maxPrice: 299, suggestedPrice: 180, dotColor: 'bg-slate-400', activeBorder: 'border-slate-400 bg-slate-400/15 text-white' },
-  { id: 'rare', label: 'Редкая (Зеленая)', minPrice: 300, maxPrice: 999, suggestedPrice: 480, dotColor: 'bg-emerald-400', activeBorder: 'border-emerald-400 bg-emerald-500/15 text-emerald-200' },
-  { id: 'epic', label: 'Эпическая (Фиолетовая)', minPrice: 1000, maxPrice: 4999, suggestedPrice: 2100, dotColor: 'bg-purple-400', activeBorder: 'border-purple-400 bg-purple-500/15 text-purple-200' },
+  { id: 'rare', label: 'Редкая (Зеленая)', minPrice: 300, maxPrice: 799, suggestedPrice: 480, dotColor: 'bg-emerald-400', activeBorder: 'border-emerald-400 bg-emerald-500/15 text-emerald-200' },
+  { id: 'super_rare', label: 'Сверхредкая (Синяя)', minPrice: 800, maxPrice: 1499, suggestedPrice: 980, dotColor: 'bg-sky-400', activeBorder: 'border-sky-400 bg-sky-500/15 text-sky-200' },
+  { id: 'epic', label: 'Эпическая (Фиолетовая)', minPrice: 1500, maxPrice: 4999, suggestedPrice: 2100, dotColor: 'bg-purple-400', activeBorder: 'border-purple-400 bg-purple-500/15 text-purple-200' },
   { id: 'legendary', label: 'Легендарная (Золотая)', minPrice: 5000, maxPrice: 250000, suggestedPrice: 8500, dotColor: 'bg-[#FACC15]', activeBorder: 'border-[#FACC15] bg-[#FACC15]/15 text-[#FEF08A]' },
 ];
 
 const CASE_WEIGHTS_BY_TIER: Record<Rarity, Record<Rarity, number>> = {
-  common: { common: 65, rare: 25, epic: 8, legendary: 2 },
-  rare: { common: 15, rare: 60, epic: 20, legendary: 5 },
-  epic: { common: 5, rare: 30, epic: 55, legendary: 10 },
-  legendary: { common: 0, rare: 18, epic: 47, legendary: 35 },
+  common: { common: 60, rare: 24, super_rare: 8, epic: 6, legendary: 2 },
+  rare: { common: 12, rare: 54, super_rare: 16, epic: 14, legendary: 4 },
+  super_rare: { common: 0, rare: 26, super_rare: 48, epic: 22, legendary: 4 },
+  epic: { common: 4, rare: 20, super_rare: 16, epic: 50, legendary: 10 },
+  legendary: { common: 0, rare: 12, super_rare: 12, epic: 41, legendary: 35 },
 };
 
 export const AdminView: React.FC<AdminViewProps> = ({
@@ -65,6 +74,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
   onCreateCase,
 }) => {
   const [name, setName] = useState('');
+  const [collectionInput, setCollectionInput] = useState('');
   const [rarity, setRarity] = useState<Rarity>('epic');
   const [price, setPrice] = useState<number>(2100);
   const [imageUrl, setImageUrl] = useState<string>('');
@@ -122,6 +132,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
       const created = await onCreateItem({
         name,
         rarity,
+        collection: collectionInput.trim() || inferCardCollection(name),
         price,
         imageUrl,
         caseIds: selectedCaseIds,
@@ -129,6 +140,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
       soundFX.playCoin();
       setFeedback(`Готовая карта «${created.name}» добавлена в базу данных!`);
       setName('');
+      setCollectionInput('');
       setImageUrl('');
       setSelectedCaseIds([]);
     } catch (err) {
@@ -200,6 +212,9 @@ export const AdminView: React.FC<AdminViewProps> = ({
                 </div>
                 <div className="text-[11px] text-slate-500">
                   {RARITY_LABELS[item.rarity]}
+                </div>
+                <div className={`text-[10px] font-medium ${getCollectionTextClass(resolveCardCollection(item))}`}>
+                  Коллекция: {resolveCardCollection(item)}
                 </div>
               </div>
 
@@ -275,7 +290,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div>
               <label htmlFor="admin-item-name" className="block text-xs font-medium text-slate-300 mb-1.5">
                 2. Название карты
@@ -288,6 +303,26 @@ export const AdminView: React.FC<AdminViewProps> = ({
                 placeholder="Например, Ваня Дрипчик"
                 className="w-full px-4 py-2.5 rounded-xl bg-[#0D0F12] border border-white/10 text-sm text-white focus:outline-none focus:border-[#FACC15]"
               />
+            </div>
+
+            <div>
+              <label htmlFor="admin-item-collection" className="block text-xs font-medium text-slate-300 mb-1.5">
+                Коллекция (авто: {inferCardCollection(name)})
+              </label>
+              <input
+                id="admin-item-collection"
+                type="text"
+                list="admin-collection-options"
+                value={collectionInput}
+                onChange={(e) => setCollectionInput(e.target.value)}
+                placeholder={inferCardCollection(name)}
+                className="w-full px-4 py-2.5 rounded-xl bg-[#0D0F12] border border-white/10 text-sm text-white focus:outline-none focus:border-[#FACC15]"
+              />
+              <datalist id="admin-collection-options">
+                {CANONICAL_COLLECTIONS.map((col) => (
+                  <option key={col} value={col} />
+                ))}
+              </datalist>
             </div>
 
             <div>
@@ -471,6 +506,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
                 className="w-full px-3.5 py-2.5 rounded-xl bg-[#0D0F12] border border-white/10 text-sm text-white focus:outline-none focus:border-[#FACC15]"
               >
                 <option value="rare">Редкий (зеленый уклон)</option>
+                <option value="super_rare">Сверхредкий (синий уклон)</option>
                 <option value="epic">Эпический (фиолетовый уклон)</option>
                 <option value="legendary">Легендарный (высокий шанс золота)</option>
               </select>

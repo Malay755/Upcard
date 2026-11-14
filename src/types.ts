@@ -1,4 +1,4 @@
-export type Rarity = 'common' | 'rare' | 'epic' | 'legendary';
+export type Rarity = 'common' | 'rare' | 'super_rare' | 'epic' | 'legendary';
 
 export type RollMode = 'under' | 'over';
 
@@ -10,6 +10,7 @@ export interface ItemCard {
   id: string;
   name: string;
   rarity: Rarity;
+  collection?: string;
   price: number;
   imageUrl: string;
   createdAt: number;
@@ -191,6 +192,8 @@ export interface UserProfile {
   totalUpgrades: number;
   wonUpgrades: number;
   totalCasesOpened: number;
+  xp: number;
+  unlockedItemIds: string[];
   inventory: InventoryItem[];
   createdAt: number;
 }

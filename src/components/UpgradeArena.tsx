@@ -15,6 +15,12 @@ import {
 import type { InventoryItem, ItemCard, Rarity, RollMode, UserProfile } from '../types';
 import { resolveAssetUrl } from '../utils/assets';
 import { useCleanCardImage } from '../utils/cardCutout';
+import {
+  filterItemsByCollection,
+  getAvailableCollections,
+  getCollectionTextClass,
+  resolveCardCollection,
+} from '../utils/collections';
 import { calculateUpgradeOdds, formatTC, RARITY_LABELS, type UpgradeOdds } from '../utils/economics';
 import { soundFX } from '../utils/sound';
 import { CardFrame } from './CardFrame';
@@ -57,6 +63,11 @@ const RARITY_CARD_ACCENT: Record<Rarity, { bar: string; glow: string; borderSele
     glow: 'from-emerald-500/20',
     borderSelected: 'border-[#FACC15] bg-[#1F2217] shadow-[0_0_16px_rgba(250,204,21,0.22)]',
   },
+  super_rare: {
+    bar: 'bg-sky-400',
+    glow: 'from-sky-500/20',
+    borderSelected: 'border-[#FACC15] bg-[#16202B] shadow-[0_0_16px_rgba(250,204,21,0.22)]',
+  },
   epic: {
     bar: 'bg-purple-400',
     glow: 'from-purple-500/20',
@@ -86,6 +97,13 @@ const TARGET_SLOT_GLOW: Record<
     borderClass: 'border-emerald-400/25',
     orbRgba: 'rgba(52, 211, 153, 0.34)',
     textClass: 'text-emerald-300',
+  },
+  super_rare: {
+    backgroundImage:
+      'radial-gradient(ellipse 85% 60% at 50% 28%, rgba(56, 189, 248, 0.26) 0%, rgba(20, 22, 26, 0.96) 72%), linear-gradient(180deg, #101E2B 0%, #14161A 100%)',
+    borderClass: 'border-sky-400/25',
+    orbRgba: 'rgba(56, 189, 248, 0.36)',
+    textClass: 'text-sky-300',
   },
   epic: {
     backgroundImage:
@@ -135,12 +153,13 @@ const CompactCatalogTile: React.FC<{
 }> = ({ item, selected, disabledByPrice, onSelect }) => {
   const { displayUrl } = useCleanCardImage(resolveAssetUrl(item.imageUrl));
   const style = RARITY_CARD_ACCENT[item.rarity] ?? RARITY_CARD_ACCENT.common;
+  const collection = resolveCardCollection(item);
 
   return (
     <button
       type="button"
       onClick={onSelect}
-      className={`group relative rounded-lg overflow-hidden border text-left transition-all duration-150 cursor-pointer p-2.5 flex flex-col justify-between h-[142px] bg-gradient-to-b ${style.glow} via-[#181B22] to-[#121419] ${
+      className={`group relative rounded-lg overflow-hidden border text-left transition-all duration-150 cursor-pointer p-2.5 flex flex-col justify-between h-[156px] bg-gradient-to-b ${style.glow} via-[#181B22] to-[#121419] ${
         selected
           ? style.borderSelected
           : 'border-white/[0.06] hover:border-white/20 hover:-translate-y-0.5'
@@ -177,10 +196,13 @@ const CompactCatalogTile: React.FC<{
         )}
       </div>
 
-      {/* Bottom Name & Rarity */}
+      {/* Bottom Name, Rarity & Collection */}
       <div className="relative z-10 text-center">
         <div className="text-[11px] font-bold text-white truncate">{item.name}</div>
         <div className="text-[9px] text-slate-400 truncate">{RARITY_LABELS[item.rarity]}</div>
+        <div className={`text-[9px] font-medium truncate ${getCollectionTextClass(collection)}`}>
+          Коллекция: {collection}
+        </div>
       </div>
     </button>
   );
@@ -225,8 +247,9 @@ export const UpgradeArena: React.FC<UpgradeArenaProps> = ({
   const [showModeSwitch, setShowModeSwitch] = useState(false);
   const [fastMode, setFastMode] = useState<boolean>(false);
 
-  // Catalog search / price filters (no rarity tabs per reference)
+  // Catalog search, collection & price filters
   const [catSearch, setCatSearch] = useState('');
+  const [selectedCollection, setSelectedCollection] = useState<string>('all');
   const [priceFrom, setPriceFrom] = useState('');
   const [priceTo, setPriceTo] = useState('');
   const [priceSort, setPriceSort] = useState<'asc' | 'desc'>('desc');
@@ -525,16 +548,18 @@ export const UpgradeArena: React.FC<UpgradeArenaProps> = ({
   const displayOdds = frozenSpin ? frozenSpin.odds : liveOdds;
   const displayMode = frozenSpin ? frozenSpin.mode : rollMode;
 
+  const availableCollections = useMemo(() => getAvailableCollections(items), [items]);
+
   const filteredCatalog = useMemo(() => {
     const q = catSearch.trim().toLowerCase();
     const minP = priceFrom ? Number(priceFrom) : null;
     const maxP = priceTo ? Number(priceTo) : null;
-    return [...items]
+    return filterItemsByCollection([...items], selectedCollection)
       .filter((it) => (!q ? true : it.name.toLowerCase().includes(q)))
       .filter((it) => (minP !== null && !Number.isNaN(minP) ? it.price >= minP : true))
       .filter((it) => (maxP !== null && !Number.isNaN(maxP) ? it.price <= maxP : true))
       .sort((a, b) => (priceSort === 'asc' ? a.price - b.price : b.price - a.price));
-  }, [items, catSearch, priceFrom, priceTo, priceSort]);
+  }, [items, selectedCollection, catSearch, priceFrom, priceTo, priceSort]);
 
   const totalPages = Math.max(1, Math.ceil(filteredCatalog.length / ITEMS_PER_PAGE));
   const safePage = Math.min(catalogPage, totalPages - 1);
@@ -545,7 +570,7 @@ export const UpgradeArena: React.FC<UpgradeArenaProps> = ({
 
   useEffect(() => {
     setCatalogPage(0);
-  }, [catSearch, priceFrom, priceTo, priceSort]);
+  }, [selectedCollection, catSearch, priceFrom, priceTo, priceSort]);
 
   const previewSampleCards = useMemo(() => {
     if (items.length === 0) return [];
@@ -1015,6 +1040,14 @@ export const UpgradeArena: React.FC<UpgradeArenaProps> = ({
                   <div className={`text-[11px] font-semibold ${TARGET_SLOT_GLOW[targetItem.rarity].textClass}`}>
                     {RARITY_LABELS[targetItem.rarity]}
                   </div>
+                  <div
+                    data-testid="target-collection"
+                    className={`text-[10px] font-medium mt-0.5 ${getCollectionTextClass(
+                      resolveCardCollection(targetItem)
+                    )}`}
+                  >
+                    Коллекция: {resolveCardCollection(targetItem)}
+                  </div>
                   <h2 className="text-base font-display font-bold text-white truncate mt-0.5">
                     {targetItem.name}
                   </h2>
@@ -1174,6 +1207,19 @@ export const UpgradeArena: React.FC<UpgradeArenaProps> = ({
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
+                <select
+                  value={selectedCollection}
+                  onChange={(e) => setSelectedCollection(e.target.value)}
+                  aria-label="Фильтр по коллекции"
+                  className="px-2.5 py-1.5 rounded-lg bg-[#0D0F12] border border-white/[0.08] text-xs text-slate-200 focus:outline-none focus:border-[#FACC15] cursor-pointer"
+                >
+                  <option value="all">Все коллекции</option>
+                  {availableCollections.map((collection) => (
+                    <option key={collection} value={collection}>
+                      {collection}
+                    </option>
+                  ))}
+                </select>
                 <button
                   type="button"
                   onClick={() => setPriceSort((prev) => (prev === 'asc' ? 'desc' : 'asc'))}
