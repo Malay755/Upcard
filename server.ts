@@ -8,6 +8,7 @@ import { Pool, type PoolClient } from 'pg';
 import { WebSocket, WebSocketServer } from 'ws';
 import { createServer as createViteServer } from 'vite';
 import type {
+  AchievementId,
   BootstrapPayload,
   BattleInvitationSummary,
   BattleMode,
@@ -36,6 +37,19 @@ import {
 } from './src/utils/economics.ts';
 import { inferCardCollection } from './src/utils/collections.ts';
 import { getCardDiscoveryXp } from './src/utils/progression.ts';
+import { evaluateCollectionSetStatus } from './src/utils/collectionSets.ts';
+import {
+  CONTRACT_REQUIRED_COUNT,
+  calculateContractOutcomes,
+  getNextContractRarity,
+  pickContractOutcome,
+} from './src/utils/contracts.ts';
+import {
+  ACHIEVEMENT_DEFINITIONS,
+  computeMergedAchievementStats,
+  createEmptyAchievementStats,
+  evaluateAchievements,
+} from './src/utils/achievements.ts';
 
 const PORT = Number(process.env.PORT) || 3000;
 const DATA_DIR = path.resolve(process.cwd(), 'data');
@@ -172,6 +186,43 @@ function grantCardDiscovery(user: UserProfile, itemId: string): number {
   const gained = getCardDiscoveryXp(item);
   user.xp += gained;
   return gained;
+}
+
+function syncUserAchievements(
+  user: UserProfile,
+  items: ItemCard[] = db.items,
+  history: UpgradeHistoryEntry[] = db.upgradeHistory,
+  transactions: Transaction[] = db.transactions,
+  battles: PersistedBattleRoom[] = db.battles
+): AchievementId[] {
+  const battleWinsFromRooms = battles.filter(
+    (room) => room.status === 'completed' && room.winnerUserId === user.id
+  ).length;
+  user.achievementStats = computeMergedAchievementStats(
+    user,
+    items,
+    history,
+    transactions,
+    battleWinsFromRooms
+  );
+  user.unlockedAchievementIds = Array.isArray(user.unlockedAchievementIds)
+    ? [...new Set(user.unlockedAchievementIds)]
+    : [];
+  user.claimedAchievementIds = Array.isArray(user.claimedAchievementIds)
+    ? [...new Set(user.claimedAchievementIds)]
+    : [];
+
+  const before = new Set(user.unlockedAchievementIds);
+  const progressList = evaluateAchievements(user, items);
+  const newlyUnlocked: AchievementId[] = [];
+  for (const entry of progressList) {
+    if (entry.unlocked && !before.has(entry.id)) {
+      user.unlockedAchievementIds.push(entry.id);
+      before.add(entry.id);
+      newlyUnlocked.push(entry.id);
+    }
+  }
+  return newlyUnlocked;
 }
 
 function consumeTelegramHash(hash: string): boolean {
@@ -587,6 +638,12 @@ function createInitialDb(): DatabaseSchema {
     totalCasesOpened: 1,
     xp: 350,
     unlockedItemIds: ['card_artemiy_daun', 'card_hustler_artemiy', 'card_down_timur'],
+    claimedCollectionRewards: [],
+    equippedBadgeCollection: null,
+    showcaseItemIds: [],
+    unlockedAchievementIds: [],
+    claimedAchievementIds: [],
+    achievementStats: createEmptyAchievementStats(),
     inventory: [
       { instanceId: 'inv_seed_1', itemId: 'card_artemiy_daun', acquiredAt: now - 3600000 * 5, source: 'starter' },
       { instanceId: 'inv_seed_2', itemId: 'card_hustler_artemiy', acquiredAt: now - 3600000 * 4, source: 'starter' },
@@ -616,6 +673,12 @@ function createInitialDb(): DatabaseSchema {
     totalCasesOpened: 3,
     xp: 250,
     unlockedItemIds: ['card_usaty_vanya'],
+    claimedCollectionRewards: [],
+    equippedBadgeCollection: null,
+    showcaseItemIds: [],
+    unlockedAchievementIds: [],
+    claimedAchievementIds: [],
+    achievementStats: createEmptyAchievementStats(),
     inventory: [
       { instanceId: 'inv_seed_4', itemId: 'card_usaty_vanya', acquiredAt: now - 3600000 * 2, source: 'upgrade' },
     ],
@@ -742,15 +805,39 @@ function normalizeStoredDb(value: unknown): DatabaseSchema {
       (sum, id) => sum + getCardDiscoveryXp(itemsById.get(id)),
       0
     );
-    return {
+    const unlockedSet = new Set(unlockedIds);
+    const claimedCollectionRewards = Array.isArray(user.claimedCollectionRewards)
+      ? [...new Set(user.claimedCollectionRewards.filter((c) => typeof c === 'string' && c.trim().length > 0))]
+      : [];
+    const showcaseItemIds = Array.isArray(user.showcaseItemIds)
+      ? [...new Set(user.showcaseItemIds.filter((id) => unlockedSet.has(id)))].slice(0, 3)
+      : [];
+    const equippedBadgeCollection = typeof user.equippedBadgeCollection === 'string' && user.equippedBadgeCollection.trim()
+      ? user.equippedBadgeCollection.trim()
+      : null;
+    const normalizedUser: UserProfile = {
       ...user,
       friendCode,
       friends: Array.isArray(user.friends) ? user.friends : [],
       topDropItemId: user.topDropItemId || topDrop?.id || null,
       topDropPrice: Math.max(Number(user.topDropPrice) || 0, topDrop?.price ?? 0),
       unlockedItemIds: unlockedIds,
+      claimedCollectionRewards,
+      equippedBadgeCollection,
+      showcaseItemIds,
+      unlockedAchievementIds: Array.isArray(user.unlockedAchievementIds) ? user.unlockedAchievementIds : [],
+      claimedAchievementIds: Array.isArray(user.claimedAchievementIds) ? user.claimedAchievementIds : [],
+      achievementStats: user.achievementStats ?? createEmptyAchievementStats(),
       xp: Math.max(Math.round(Number(user.xp) || 0), minXpFromUnlocked),
     };
+    syncUserAchievements(
+      normalizedUser,
+      activeItems,
+      loadedUpgradeHistory,
+      loadedTransactions,
+      Array.isArray(parsed.battles) ? parsed.battles : []
+    );
+    return normalizedUser;
   });
   const normalized: DatabaseSchema = {
     ...seed,
@@ -842,10 +929,16 @@ function normalizeStoredDb(value: unknown): DatabaseSchema {
       );
       const itemsById = new Map(normalized.items.map((it) => [it.id, it]));
       const minXp = unlockedIds.reduce((sum, id) => sum + getCardDiscoveryXp(itemsById.get(id)), 0);
+      const unlockedSet = new Set(unlockedIds);
       return {
         ...user,
         inventory: cleanedInventory,
         unlockedItemIds: unlockedIds,
+        claimedCollectionRewards: Array.isArray(user.claimedCollectionRewards) ? user.claimedCollectionRewards : [],
+        equippedBadgeCollection: user.equippedBadgeCollection ?? null,
+        showcaseItemIds: (Array.isArray(user.showcaseItemIds) ? user.showcaseItemIds : [])
+          .filter((id) => unlockedSet.has(id) && !DEPRECATED_DUPLICATE_IDS.has(id))
+          .slice(0, 3),
         xp: Math.max(Math.round(Number(user.xp) || 0), minXp),
         topDropItemId: needsTopDropRecompute ? (nextTopDrop?.id ?? null) : user.topDropItemId,
         topDropPrice: needsTopDropRecompute ? (nextTopDrop?.price ?? 0) : user.topDropPrice,
@@ -1049,7 +1142,7 @@ function recordTx(
   return tx;
 }
 
-function pushLiveDrop(userName: string, itemId: string, source: 'upgrade' | 'case', multiplier?: number) {
+function pushLiveDrop(userName: string, itemId: string, source: 'upgrade' | 'case' | 'contract', multiplier?: number) {
   const item = db.items.find((candidate) => candidate.id === itemId);
   if (!item || item.price < 1000) return;
   db.liveDrops.unshift({
@@ -1233,6 +1326,12 @@ function buildPayload(userId?: string, authenticated = Boolean(userId)): Bootstr
     totalCasesOpened: 0,
     xp: 0,
     unlockedItemIds: [],
+    claimedCollectionRewards: [],
+    equippedBadgeCollection: null,
+    showcaseItemIds: [],
+    unlockedAchievementIds: [],
+    claimedAchievementIds: [],
+    achievementStats: createEmptyAchievementStats(),
     inventory: [],
     createdAt: Date.now(),
   } satisfies UserProfile;
@@ -1435,11 +1534,18 @@ function upsertTelegramUser(params: {
       totalCasesOpened: 0,
       xp: getCardDiscoveryXp(db.items.find((it) => it.id === 'card_artemiy_daun')),
       unlockedItemIds: ['card_artemiy_daun'],
+      claimedCollectionRewards: [],
+      equippedBadgeCollection: null,
+      showcaseItemIds: [],
+      unlockedAchievementIds: [],
+      claimedAchievementIds: [],
+      achievementStats: createEmptyAchievementStats(),
       inventory: [
         { instanceId: uid('inv'), itemId: 'card_artemiy_daun', acquiredAt: Date.now(), source: 'starter' },
       ],
       createdAt: Date.now(),
     };
+    syncUserAchievements(user);
     db.users.push(user);
     recordTx(user, 'welcome_bonus', 500, 'Стартовый игровой бонус');
   } else {
@@ -1448,6 +1554,12 @@ function upsertTelegramUser(params: {
     if (cleanDisplay) user.telegramFirstName = cleanDisplay;
     if (params.photoUrl) user.telegramPhotoUrl = params.photoUrl;
     user.authProvider = params.provider;
+    user.claimedCollectionRewards ??= [];
+    user.equippedBadgeCollection ??= null;
+    user.showcaseItemIds ??= [];
+    user.unlockedAchievementIds ??= [];
+    user.claimedAchievementIds ??= [];
+    syncUserAchievements(user);
   }
 
   saveDb();
@@ -1477,6 +1589,11 @@ async function startServer() {
   });
 
   const telegramBotToken = (process.env.TELEGRAM_BOT_TOKEN ?? '').trim();
+  const telegramWebAppUrl = (
+    process.env.TELEGRAM_WEBAPP_URL ??
+    process.env.APP_URL ??
+    ''
+  ).trim();
   let telegramBotUsername = (
     process.env.TELEGRAM_BOT_USERNAME ??
     process.env.VITE_TELEGRAM_BOT_USERNAME ??
@@ -1496,6 +1613,97 @@ async function startServer() {
       // Ignore network failure at boot; webhook/config still stays responsive
     }
   }
+
+  const sendTelegramStartReply = async (chatId: number, firstName?: string) => {
+    if (!telegramBotToken) return;
+    const greeting = firstName ? `Привет, ${firstName}!` : 'Привет!';
+    const hasHttpsUrl = telegramWebAppUrl.startsWith('https://');
+    const body: Record<string, unknown> = {
+      chat_id: chatId,
+      text: `${greeting} Добро пожаловать в «Ферму» — открывай кейсы, крути апгрейды, подписывай контракты 7-в-1 и собирай коллекции карточек.`,
+    };
+    if (hasHttpsUrl) {
+      body.reply_markup = {
+        inline_keyboard: [[{ text: '🚀 Открыть Ферму', web_app: { url: telegramWebAppUrl } }]],
+      };
+    }
+    await fetch(`https://api.telegram.org/bot${telegramBotToken}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }).catch(() => undefined);
+  };
+
+  if (telegramBotToken) {
+    void (async () => {
+      try {
+        await fetch(`https://api.telegram.org/bot${telegramBotToken}/setMyCommands`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            commands: [{ command: 'start', description: 'Открыть Ферму (Mini App)' }],
+          }),
+        });
+        if (telegramWebAppUrl.startsWith('https://')) {
+          await fetch(`https://api.telegram.org/bot${telegramBotToken}/setChatMenuButton`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              menu_button: {
+                type: 'web_app',
+                text: 'Ферма',
+                web_app: { url: telegramWebAppUrl },
+              },
+            }),
+          });
+        }
+
+        if (process.env.TELEGRAM_BOT_POLLING !== 'false') {
+          await fetch(`https://api.telegram.org/bot${telegramBotToken}/deleteWebhook?drop_pending_updates=false`).catch(() => undefined);
+          let offset = 0;
+          while (true) {
+            const pollRes = await fetch(
+              `https://api.telegram.org/bot${telegramBotToken}/getUpdates?timeout=20&offset=${offset}&allowed_updates=${encodeURIComponent(JSON.stringify(['message']))}`
+            );
+            if (pollRes.status === 401 || pollRes.status === 409) break;
+            const pollJson = (await pollRes.json()) as {
+              ok?: boolean;
+              result?: Array<{
+                update_id: number;
+                message?: { chat?: { id?: number }; text?: string; from?: { first_name?: string } };
+              }>;
+            };
+            if (!pollJson.ok || !Array.isArray(pollJson.result)) {
+              await new Promise((resolve) => setTimeout(resolve, 4000));
+              continue;
+            }
+            for (const update of pollJson.result) {
+              offset = Math.max(offset, update.update_id + 1);
+              const text = update.message?.text?.trim() ?? '';
+              const chatId = update.message?.chat?.id;
+              if (chatId && text.startsWith('/start')) {
+                await sendTelegramStartReply(chatId, update.message?.from?.first_name);
+              }
+            }
+          }
+        }
+      } catch {
+        // Non-fatal: server stays healthy even if Telegram polling encounters a transient error.
+      }
+    })();
+  }
+
+  app.post('/api/telegram/webhook', (req, res) => {
+    const body = req.body as {
+      message?: { chat?: { id?: number }; text?: string; from?: { first_name?: string } };
+    };
+    const chatId = body?.message?.chat?.id;
+    const text = body?.message?.text?.trim() ?? '';
+    if (telegramBotToken && chatId && text.startsWith('/start')) {
+      void sendTelegramStartReply(chatId, body?.message?.from?.first_name);
+    }
+    res.json({ ok: true });
+  });
 
   app.get('/api/bootstrap', (req, res) => {
     const sessionUid = verifySessionToken(extractSessionCookie(req));
@@ -1567,6 +1775,8 @@ async function startServer() {
       !(entry.fromUserId === sender.id && entry.toUserId === user.id)
       && !(entry.fromUserId === user.id && entry.toUserId === sender.id)
     );
+    syncUserAchievements(user);
+    syncUserAchievements(sender);
     saveDb();
     sendRealtimeToUser(sender.id, { type: 'friend_request_accepted', username: user.username });
     res.json({ payload: buildPayload(user.id) });
@@ -1615,12 +1825,20 @@ async function startServer() {
     const topDrop = friend.topDropItemId
       ? db.items.find((item) => item.id === friend.topDropItemId) ?? null
       : null;
+    const showcaseItems = (friend.showcaseItemIds ?? [])
+      .map((id) => db.items.find((item) => item.id === id))
+      .filter((item): item is ItemCard => Boolean(item))
+      .slice(0, 3);
     const profile: FriendProfile = {
       id: friend.id,
       username: friend.username,
       telegramUsername: friend.telegramUsername,
       telegramPhotoUrl: friend.telegramPhotoUrl,
       avatarColor: friend.avatarColor,
+      xp: friend.xp ?? 0,
+      equippedBadgeCollection: friend.equippedBadgeCollection ?? null,
+      showcaseItems,
+      unlockedAchievementsCount: (friend.unlockedAchievementIds ?? []).length,
       totalUpgrades: friend.totalUpgrades,
       wonUpgrades: friend.wonUpgrades,
       totalCasesOpened: friend.totalCasesOpened,
@@ -1638,6 +1856,7 @@ async function startServer() {
     res.json({
       botConfigured: Boolean(telegramBotToken && telegramBotUsername),
       botUsername: telegramBotUsername || null,
+      webAppUrl: telegramWebAppUrl || null,
     });
   });
 
@@ -1792,6 +2011,10 @@ async function startServer() {
           const inventory: InventoryItem = { instanceId: uid('inv'), itemId: item.id, acquiredAt: Date.now(), source: 'battle' };
           recipient.inventory.push(inventory); awarded.push(inventory);
           grantCardDiscovery(recipient, item.id);
+          if (item.rarity === 'legendary') {
+            recipient.achievementStats = recipient.achievementStats ?? createEmptyAchievementStats();
+            recipient.achievementStats.legendaryCaseDrop = true;
+          }
           noteTopDrop(recipient, item); pushLiveDrop(recipient.username, item.id, 'case');
           (awardedByUser[recipient.id] ??= []).push(inventory.instanceId);
         }
@@ -1832,8 +2055,12 @@ async function startServer() {
     }
     if (room.winnerUserId) {
       const winner = db.users.find((entry) => entry.id === room.winnerUserId)!;
+      winner.achievementStats = winner.achievementStats ?? createEmptyAchievementStats();
+      winner.achievementStats.battleWins += 1;
       recordTx(winner, 'battle_win', 0, 'Выигрыш в батле', `${awarded.length} карточек добавлено в инвентарь`);
     }
+    syncUserAchievements(host);
+    syncUserAchievements(guest);
     sendRealtimeToBattle(room, { type: 'battle_started', roomId: room.id, startedAt: room.startedAt });
     room.roundResults?.forEach((round, index) => {
       setTimeout(() => sendRealtimeToBattle(room, { type: 'battle_round', roomId: room.id, round: index + 1, payload: round }), (index + 1) * 5400);
@@ -2125,6 +2352,26 @@ async function startServer() {
       createdAt: Date.now(),
     };
     db.upgradeHistory.unshift(entry);
+    user.achievementStats = user.achievementStats ?? createEmptyAchievementStats();
+    if (won) {
+      user.achievementStats.upgradeWinStreak += 1;
+      user.achievementStats.upgradeLoseStreak = 0;
+      user.achievementStats.maxUpgradeWinStreak = Math.max(
+        user.achievementStats.maxUpgradeWinStreak,
+        user.achievementStats.upgradeWinStreak
+      );
+      if (odds.winChance <= 15) {
+        user.achievementStats.lowChanceUpgradeWin = true;
+      }
+    } else {
+      user.achievementStats.upgradeLoseStreak += 1;
+      user.achievementStats.upgradeWinStreak = 0;
+      user.achievementStats.maxUpgradeLoseStreak = Math.max(
+        user.achievementStats.maxUpgradeLoseStreak,
+        user.achievementStats.upgradeLoseStreak
+      );
+    }
+    syncUserAchievements(user);
 
     saveDb();
     res.json({
@@ -2180,6 +2427,11 @@ async function startServer() {
 
     recordTx(user, 'case_open', -caseBox.price, `Открытие кейса «${caseBox.name}»`, `Выпал: ${wonItem.name}`);
     pushLiveDrop(user.username, wonItem.id, 'case');
+    if (wonItem.rarity === 'legendary') {
+      user.achievementStats = user.achievementStats ?? createEmptyAchievementStats();
+      user.achievementStats.legendaryCaseDrop = true;
+    }
+    syncUserAchievements(user);
     saveDb();
 
     res.json({
@@ -2191,6 +2443,246 @@ async function startServer() {
         xpGained,
       },
     });
+  });
+
+  app.post('/api/collections/claim', (req, res) => {
+    const user = authenticatedUser(req, res);
+    if (!user) return;
+    const collection = String((req.body as { collection?: unknown }).collection ?? '').trim();
+    if (!collection) {
+      res.status(400).json({ error: 'Укажите название коллекции.' });
+      return;
+    }
+    user.claimedCollectionRewards ??= [];
+    user.unlockedItemIds ??= [];
+    const status = evaluateCollectionSetStatus(
+      collection,
+      db.items,
+      user.unlockedItemIds,
+      user.claimedCollectionRewards
+    );
+    if (status.totalCards === 0) {
+      res.status(404).json({ error: 'Коллекция не найдена.' });
+      return;
+    }
+    if (!status.isComplete) {
+      res.status(400).json({ error: `Соберите все карты коллекции «${collection}» (${status.unlockedCards}/${status.totalCards}).` });
+      return;
+    }
+    if (status.isClaimed) {
+      res.status(409).json({ error: `Награда за коллекцию «${collection}» уже получена.` });
+      return;
+    }
+
+    user.claimedCollectionRewards.push(collection);
+    user.balance += status.rewardTc;
+    user.xp = Math.max(0, Math.round(Number(user.xp) || 0)) + status.rewardXp;
+    if (!user.equippedBadgeCollection) {
+      user.equippedBadgeCollection = collection;
+    }
+
+    recordTx(
+      user,
+      'collection_bonus',
+      status.rewardTc,
+      `Сбор коллекции «${collection}»`,
+      `+${status.rewardXp} XP · бейдж «${status.badgeTitle}»`
+    );
+    syncUserAchievements(user);
+    saveDb();
+
+    const updatedStatus = evaluateCollectionSetStatus(
+      collection,
+      db.items,
+      user.unlockedItemIds,
+      user.claimedCollectionRewards
+    );
+    res.json({ payload: buildPayload(user.id), reward: updatedStatus });
+  });
+
+  app.post('/api/profile/customization', (req, res) => {
+    const user = authenticatedUser(req, res);
+    if (!user) return;
+    const { equippedBadgeCollection, showcaseItemIds } = req.body as {
+      equippedBadgeCollection?: string | null;
+      showcaseItemIds?: string[];
+    };
+
+    user.unlockedItemIds ??= [];
+    user.claimedCollectionRewards ??= [];
+
+    if (equippedBadgeCollection !== undefined) {
+      if (equippedBadgeCollection === null || equippedBadgeCollection === '') {
+        user.equippedBadgeCollection = null;
+      } else {
+        const col = String(equippedBadgeCollection).trim();
+        const status = evaluateCollectionSetStatus(
+          col,
+          db.items,
+          user.unlockedItemIds,
+          user.claimedCollectionRewards
+        );
+        if (!status.isComplete) {
+          res.status(400).json({ error: `Чтобы надеть бейдж «${status.badgeTitle}», откройте всю коллекцию «${col}».` });
+          return;
+        }
+        user.equippedBadgeCollection = col;
+      }
+    }
+
+    if (showcaseItemIds !== undefined) {
+      if (!Array.isArray(showcaseItemIds)) {
+        res.status(400).json({ error: 'Некорректный формат витрины профиля.' });
+        return;
+      }
+      const uniqueIds = [...new Set(showcaseItemIds.filter((id): id is string => typeof id === 'string'))];
+      if (uniqueIds.length > 3) {
+        res.status(400).json({ error: 'В витрине профиля можно закрепить максимум 3 карточки.' });
+        return;
+      }
+      const unlockedSet = new Set([
+        ...user.unlockedItemIds,
+        ...user.inventory.map((inv) => inv.itemId),
+      ]);
+      for (const id of uniqueIds) {
+        if (!db.items.some((item) => item.id === id)) {
+          res.status(404).json({ error: 'Одна из выбранных карточек не найдена в каталоге.' });
+          return;
+        }
+        if (!unlockedSet.has(id)) {
+          res.status(400).json({ error: 'В витрину можно закрепить только уже открытые вами карточки.' });
+          return;
+        }
+      }
+      user.showcaseItemIds = uniqueIds;
+    }
+
+    saveDb();
+    res.json({ payload: buildPayload(user.id) });
+  });
+
+  app.post('/api/contracts/craft', (req, res) => {
+    const user = authenticatedUser(req, res);
+    if (!user) return;
+    const rawIds = (req.body as { instanceIds?: unknown }).instanceIds;
+    const uniqueIds = Array.isArray(rawIds)
+      ? [...new Set(rawIds.filter((id): id is string => typeof id === 'string'))]
+      : [];
+
+    if (uniqueIds.length !== CONTRACT_REQUIRED_COUNT) {
+      res.status(400).json({ error: `Для контракта выберите ровно ${CONTRACT_REQUIRED_COUNT} разных карточек.` });
+      return;
+    }
+
+    const ownedById = new Map(user.inventory.map((inv) => [inv.instanceId, inv]));
+    const selectedEntries = uniqueIds
+      .map((id) => ownedById.get(id))
+      .filter((entry): entry is InventoryItem => Boolean(entry));
+
+    if (selectedEntries.length !== CONTRACT_REQUIRED_COUNT) {
+      res.status(400).json({ error: 'Некоторые выбранные карточки больше не находятся в инвентаре.' });
+      return;
+    }
+
+    const resolvedItems = selectedEntries.map((entry) => db.items.find((item) => item.id === entry.itemId));
+    if (resolvedItems.some((item) => !item)) {
+      res.status(400).json({ error: 'Одна из выбранных карточек отсутствует в каталоге.' });
+      return;
+    }
+
+    const validItems = resolvedItems as ItemCard[];
+    const inputRarity = validItems[0].rarity;
+    if (validItems.some((item) => item.rarity !== inputRarity)) {
+      res.status(400).json({ error: 'Все 7 карт контракта должны иметь одинаковую редкость.' });
+      return;
+    }
+
+    const targetRarity = getNextContractRarity(inputRarity);
+    if (!targetRarity) {
+      res.status(400).json({ error: 'Легендарные карты — максимальная редкость и не участвуют в контрактах.' });
+      return;
+    }
+
+    const outcomes = calculateContractOutcomes(targetRarity, db.items);
+    if (outcomes.length === 0) {
+      res.status(400).json({ error: 'В каталоге пока нет карточек следующей редкости.' });
+      return;
+    }
+
+    const consumeSet = new Set(uniqueIds);
+    user.inventory = user.inventory.filter((inv) => !consumeSet.has(inv.instanceId));
+
+    const wonItem = pickContractOutcome(outcomes, crypto.randomInt(0, 1_000_000) / 1_000_000);
+    const wonInstance: InventoryItem = {
+      instanceId: uid('inv'),
+      itemId: wonItem.id,
+      acquiredAt: Date.now(),
+      source: 'contract',
+    };
+    user.inventory.unshift(wonInstance);
+
+    const xpGained = grantCardDiscovery(user, wonItem.id);
+    noteTopDrop(user, wonItem);
+    pushLiveDrop(user.username, wonItem.id, 'contract');
+    recordTx(
+      user,
+      'contract_craft',
+      0,
+      `Контракт 7-в-1 (${inputRarity} → ${targetRarity})`,
+      `Получена: ${wonItem.name}`
+    );
+    syncUserAchievements(user);
+    saveDb();
+
+    res.json({
+      payload: buildPayload(user.id),
+      result: {
+        wonItem,
+        instance: wonInstance,
+        xpGained,
+        inputRarity,
+        targetRarity,
+      },
+    });
+  });
+
+  app.post('/api/achievements/claim', (req, res) => {
+    const user = authenticatedUser(req, res);
+    if (!user) return;
+    const achievementId = String((req.body as { achievementId?: unknown }).achievementId ?? '').trim() as AchievementId;
+    const def = ACHIEVEMENT_DEFINITIONS.find((item) => item.id === achievementId);
+    if (!def) {
+      res.status(404).json({ error: 'Достижение не найдено.' });
+      return;
+    }
+
+    syncUserAchievements(user);
+    const evaluated = evaluateAchievements(user, db.items).find((entry) => entry.id === achievementId);
+    if (!evaluated || !evaluated.unlocked) {
+      res.status(400).json({ error: `Условие достижения «${def.title}» ещё не выполнено.` });
+      return;
+    }
+    if (evaluated.claimed) {
+      res.status(409).json({ error: `Награда за достижение «${def.title}» уже получена.` });
+      return;
+    }
+
+    user.claimedAchievementIds = [...new Set([...(user.claimedAchievementIds ?? []), achievementId])];
+    user.balance += def.rewardTc;
+    user.xp = Math.max(0, Math.round(Number(user.xp) || 0)) + def.rewardXp;
+    recordTx(
+      user,
+      'achievement_reward',
+      def.rewardTc,
+      `Достижение «${def.title}»`,
+      `+${def.rewardXp} XP`
+    );
+    // Re-run in case achievement XP unlocks "Коллекционер" (Level 10)
+    syncUserAchievements(user);
+    saveDb();
+
+    const updatedAchievement = evaluateAchievements(user, db.items).find((entry) => entry.id === achievementId);
+    res.json({ payload: buildPayload(user.id), claimedAchievement: updatedAchievement });
   });
 
   app.post('/api/admin/items', (req, res) => {
@@ -2290,6 +2782,7 @@ async function startServer() {
     for (const u of db.users) {
       u.inventory = u.inventory.filter((inv) => inv.itemId !== id);
       u.unlockedItemIds = (u.unlockedItemIds ?? []).filter((unlockedId) => unlockedId !== id);
+      u.showcaseItemIds = (u.showcaseItemIds ?? []).filter((sid) => sid !== id);
     }
     saveDb();
     res.json({ items: db.items, cases: db.cases });
@@ -2311,6 +2804,7 @@ async function startServer() {
       source: 'admin',
     });
     grantCardDiscovery(user, item.id);
+    syncUserAchievements(user);
     saveDb();
     res.json({ payload: buildPayload(user.id) });
   });

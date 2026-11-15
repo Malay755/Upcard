@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { ArrowLeft, BookOpen, CheckCircle2, Lock, Sparkles, Trophy } from 'lucide-react';
+import { ArrowLeft, Award, BookOpen, CheckCircle2, Gift, Lock, Sparkles, Trophy } from 'lucide-react';
 import type { ItemCard, Rarity } from '../types';
 import { resolveAssetUrl } from '../utils/assets';
 import { useCleanCardImage } from '../utils/cardCutout';
@@ -8,6 +8,7 @@ import {
   getCollectionTextClass,
   resolveCardCollection,
 } from '../utils/collections';
+import { evaluateCollectionSetStatus, type CollectionSetReward } from '../utils/collectionSets';
 import { formatTC, RARITY_LABELS } from '../utils/economics';
 import {
   getCardDiscoveryXp,
@@ -15,15 +16,20 @@ import {
   getTotalCatalogXp,
   RARITY_DISCOVERY_XP,
 } from '../utils/progression';
+import { soundFX } from '../utils/sound';
 import { TelegramPaperPlaneIcon } from './TelegramLoginModal';
 
 interface CollectionDiaryViewProps {
   items: ItemCard[];
   unlockedItemIds: string[];
+  claimedCollections?: string[];
+  equippedBadgeCollection?: string | null;
   totalXp: number;
   isAuthorized: boolean;
   onBack: () => void;
   onOpenTelegramLogin: () => void;
+  onClaimCollectionReward?: (collection: string) => Promise<CollectionSetReward>;
+  onEquipBadge?: (collection: string | null) => Promise<void>;
 }
 
 const RARITY_ACCENTS: Record<Rarity, { bar: string; badge: string; glow: string }> = {
@@ -169,13 +175,19 @@ const DiaryCardTile: React.FC<{
 export const CollectionDiaryView: React.FC<CollectionDiaryViewProps> = ({
   items,
   unlockedItemIds,
+  claimedCollections = [],
+  equippedBadgeCollection = null,
   totalXp,
   isAuthorized,
   onBack,
   onOpenTelegramLogin,
+  onClaimCollectionReward,
+  onEquipBadge,
 }) => {
   const [selectedCollection, setSelectedCollection] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<'all' | 'unlocked' | 'locked'>('all');
+  const [busyCollection, setBusyCollection] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{ text: string; ok: boolean } | null>(null);
 
   const unlockedSet = useMemo(() => new Set(unlockedItemIds), [unlockedItemIds]);
   const levelInfo = useMemo(() => getLevelProgress(totalXp), [totalXp]);
@@ -228,6 +240,13 @@ export const CollectionDiaryView: React.FC<CollectionDiaryViewProps> = ({
           return true;
         });
 
+        const setReward = evaluateCollectionSetStatus(
+          collectionName,
+          items,
+          unlockedItemIds,
+          claimedCollections
+        );
+
         return {
           collectionName,
           allInCollection,
@@ -235,10 +254,54 @@ export const CollectionDiaryView: React.FC<CollectionDiaryViewProps> = ({
           unlockedInCollection,
           totalCollectionXp,
           earnedCollectionXp,
+          setReward,
         };
       })
       .filter((section) => section.visibleCards.length > 0);
-  }, [collections, items, selectedCollection, statusFilter, unlockedSet]);
+  }, [collections, items, selectedCollection, statusFilter, unlockedSet, unlockedItemIds, claimedCollections]);
+
+  const handleClaim = async (collectionName: string) => {
+    if (!onClaimCollectionReward || busyCollection) return;
+    setBusyCollection(collectionName);
+    setNotice(null);
+    try {
+      const reward = await onClaimCollectionReward(collectionName);
+      soundFX.playCoin();
+      setNotice({
+        text: `Коллекция «${collectionName}» собрана! Получено +${formatTC(reward.rewardTc)} TC, +${reward.rewardXp} XP и бейдж «${reward.badgeTitle}».`,
+        ok: true,
+      });
+    } catch (err) {
+      setNotice({
+        text: err instanceof Error ? err.message : 'Не удалось забрать бонус коллекции.',
+        ok: false,
+      });
+    } finally {
+      setBusyCollection(null);
+    }
+  };
+
+  const handleToggleEquip = async (collectionName: string, currentlyEquipped: boolean) => {
+    if (!onEquipBadge || busyCollection) return;
+    setBusyCollection(collectionName);
+    setNotice(null);
+    try {
+      await onEquipBadge(currentlyEquipped ? null : collectionName);
+      setNotice({
+        text: currentlyEquipped
+          ? 'Бейдж снят с профиля.'
+          : `Бейдж коллекции «${collectionName}» установлен в профиле!`,
+        ok: true,
+      });
+    } catch (err) {
+      setNotice({
+        text: err instanceof Error ? err.message : 'Не удалось обновить бейдж.',
+        ok: false,
+      });
+    } finally {
+      setBusyCollection(null);
+    }
+  };
 
   const completionPct =
     items.length > 0 ? Math.round((unlockedCount / items.length) * 100) : 0;
@@ -426,6 +489,19 @@ export const CollectionDiaryView: React.FC<CollectionDiaryViewProps> = ({
         </div>
       </section>
 
+      {notice && (
+        <div
+          role="status"
+          className={`rounded-xl border px-4 py-3 text-xs font-medium ${
+            notice.ok
+              ? 'border-emerald-400/30 bg-emerald-500/10 text-emerald-300'
+              : 'border-rose-400/30 bg-rose-500/10 text-rose-300'
+          }`}
+        >
+          {notice.text}
+        </div>
+      )}
+
       {/* Collection Sections */}
       {groupedSections.length === 0 ? (
         <div className="bg-[#14161A] border border-dashed border-white/10 rounded-xl py-12 text-center space-y-2">
@@ -443,46 +519,103 @@ export const CollectionDiaryView: React.FC<CollectionDiaryViewProps> = ({
         </div>
       ) : (
         <div className="space-y-5">
-          {groupedSections.map((section) => (
-            <section
-              key={section.collectionName}
-              data-testid={`diary-collection-${section.collectionName}`}
-              className="bg-[#14161A] border border-white/[0.06] rounded-xl p-5 space-y-4"
-            >
-              <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-white/[0.06]">
-                <div className="flex items-center gap-2.5">
-                  <h2
-                    className={`text-base font-display font-bold ${getCollectionTextClass(
-                      section.collectionName
-                    )}`}
-                  >
-                    Коллекция «{section.collectionName}»
-                  </h2>
-                  <span className="px-2 py-0.5 rounded bg-[#0D0F12] border border-white/[0.06] text-[11px] font-mono-num text-slate-300">
-                    {section.unlockedInCollection} / {section.allInCollection.length}
-                  </span>
+          {groupedSections.map((section) => {
+            const { setReward } = section;
+            const isEquipped = equippedBadgeCollection === section.collectionName;
+            const isBusy = busyCollection === section.collectionName;
+
+            return (
+              <section
+                key={section.collectionName}
+                data-testid={`diary-collection-${section.collectionName}`}
+                className="bg-[#14161A] border border-white/[0.06] rounded-xl p-5 space-y-4"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-white/[0.06]">
+                  <div className="space-y-1">
+                    <div className="flex flex-wrap items-center gap-2.5">
+                      <h2
+                        className={`text-base font-display font-bold ${getCollectionTextClass(
+                          section.collectionName
+                        )}`}
+                      >
+                        Коллекция «{section.collectionName}»
+                      </h2>
+                      <span className="px-2 py-0.5 rounded bg-[#0D0F12] border border-white/[0.06] text-[11px] font-mono-num text-slate-300">
+                        {section.unlockedInCollection} / {section.allInCollection.length}
+                      </span>
+                      <span
+                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded border text-[10px] font-semibold ${setReward.badgeStyleClass}`}
+                      >
+                        <Award className="w-3 h-3" />
+                        <span>{setReward.badgeTitle}</span>
+                      </span>
+                    </div>
+
+                    <div className="text-[11px] text-slate-400">
+                      Бонус за весь сет:{' '}
+                      <span className="font-mono-num font-bold text-[#FACC15]">
+                        +{formatTC(setReward.rewardTc)} TC
+                      </span>{' '}
+                      ·{' '}
+                      <span className="font-mono-num font-bold text-emerald-300">
+                        +{setReward.rewardXp} XP
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-3">
+                    <div className="text-xs font-mono-num text-slate-400">
+                      Опыт коллекции:{' '}
+                      <span className="text-[#FACC15] font-bold">
+                        {section.earnedCollectionXp}
+                      </span>{' '}
+                      / {section.totalCollectionXp} XP
+                    </div>
+
+                    {isAuthorized && setReward.isComplete && !setReward.isClaimed && onClaimCollectionReward && (
+                      <button
+                        type="button"
+                        disabled={isBusy}
+                        data-testid={`claim-set-${section.collectionName}`}
+                        onClick={() => handleClaim(section.collectionName)}
+                        className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[#FACC15] hover:bg-[#FDE047] text-[#0B0D10] text-xs font-display font-bold transition-colors cursor-pointer disabled:opacity-50 shadow-[0_0_16px_rgba(250,204,21,0.25)]"
+                      >
+                        <Gift className="w-3.5 h-3.5" />
+                        <span>{isBusy ? 'Начисляем...' : 'Забрать бонус сета'}</span>
+                      </button>
+                    )}
+
+                    {isAuthorized && setReward.isComplete && setReward.isClaimed && onEquipBadge && (
+                      <button
+                        type="button"
+                        disabled={isBusy}
+                        data-testid={`equip-badge-${section.collectionName}`}
+                        onClick={() => handleToggleEquip(section.collectionName, isEquipped)}
+                        className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors cursor-pointer disabled:opacity-50 ${
+                          isEquipped
+                            ? 'bg-emerald-500/15 border-emerald-400/35 text-emerald-300 hover:bg-emerald-500/25'
+                            : 'bg-[#0D0F12] border-white/[0.1] text-slate-200 hover:border-[#FACC15]/40 hover:text-[#FACC15]'
+                        }`}
+                      >
+                        <Award className="w-3.5 h-3.5" />
+                        <span>{isEquipped ? 'Бейдж надет ✓' : 'Надеть бейдж'}</span>
+                      </button>
+                    )}
+                  </div>
                 </div>
 
-                <div className="text-xs font-mono-num text-slate-400">
-                  Опыт коллекции:{' '}
-                  <span className="text-[#FACC15] font-bold">
-                    {section.earnedCollectionXp}
-                  </span>{' '}
-                  / {section.totalCollectionXp} XP
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3.5">
+                  {section.visibleCards.map((item) => (
+                    <DiaryCardTile
+                      key={item.id}
+                      item={item}
+                      unlocked={unlockedSet.has(item.id)}
+                    />
+                  ))}
                 </div>
-              </div>
-
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3.5">
-                {section.visibleCards.map((item) => (
-                  <DiaryCardTile
-                    key={item.id}
-                    item={item}
-                    unlocked={unlockedSet.has(item.id)}
-                  />
-                ))}
-              </div>
-            </section>
-          ))}
+              </section>
+            );
+          })}
         </div>
       )}
     </div>

@@ -19,6 +19,7 @@ interface HeaderProps {
 
 const NAV_ITEMS: { id: AppTab; label: string }[] = [
   { id: 'upgrade', label: 'Апгрейд' },
+  { id: 'contracts', label: 'Контракты' },
   { id: 'cases', label: 'Кейсы' },
   { id: 'battles', label: 'Батлы' },
   { id: 'bonuses', label: 'Бонусы' },

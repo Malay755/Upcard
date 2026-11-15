@@ -1,16 +1,20 @@
 import React, { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
-import type { AppTab, BootstrapPayload, FriendProfile, LiveDropEntry, Rarity, RollMode } from './types';
+import type { AchievementId, AppTab, BootstrapPayload, FriendProfile, LiveDropEntry, Rarity, RollMode } from './types';
+import { ACHIEVEMENT_DEFINITIONS, type AchievementProgress } from './utils/achievements';
+import type { CollectionSetReward } from './utils/collectionSets';
 import { soundFX } from './utils/sound';
 import { Header } from './components/Header';
 import { TopDropsSidebar } from './components/TopDropsSidebar';
 import { DepositModal } from './components/DepositModal';
 import { LoadingOverlay } from './components/LoadingOverlay';
+import type { ContractCraftResult } from './components/ContractWorkbench';
 import {
   TelegramLoginModal,
   type TelegramAuthSuccessResult,
 } from './components/TelegramLoginModal';
 
 const UpgradeArena = lazy(() => import('./components/UpgradeArena').then((m) => ({ default: m.UpgradeArena })));
+const ContractWorkbench = lazy(() => import('./components/ContractWorkbench').then((m) => ({ default: m.ContractWorkbench })));
 const CasesView = lazy(() => import('./components/CasesView').then((m) => ({ default: m.CasesView })));
 const BonusesView = lazy(() => import('./components/BonusesView').then((m) => ({ default: m.BonusesView })));
 const ProfileView = lazy(() => import('./components/ProfileView').then((m) => ({ default: m.ProfileView })));
@@ -48,6 +52,10 @@ export default function App() {
   const handledInviteCode = useRef('');
   const noticeTimer = useRef<number | null>(null);
   const activeTabRef = useRef(activeTab);
+  const prevUnlockedAchievementsRef = useRef<{ userId: string | null; ids: Set<string> }>({
+    userId: null,
+    ids: new Set(),
+  });
 
   const navigateToTab = useCallback((tab: AppTab) => {
     if (tab === activeTabRef.current) return;
@@ -82,8 +90,10 @@ export default function App() {
     try {
       // Auto-authenticate when opened inside a Telegram Bot Mini App (Telegram.WebApp.initData)
       const win = window as unknown as {
-        Telegram?: { WebApp?: { initData?: string; ready?: () => void } };
+        Telegram?: { WebApp?: { initData?: string; ready?: () => void; expand?: () => void } };
       };
+      win.Telegram?.WebApp?.ready?.();
+      win.Telegram?.WebApp?.expand?.();
       const tgInitData = win.Telegram?.WebApp?.initData;
       const current = await apiJson<BootstrapPayload>('/api/bootstrap');
       if (current.authenticated) {
@@ -95,7 +105,6 @@ export default function App() {
 
       if (tgInitData) {
         try {
-          win.Telegram?.WebApp?.ready?.();
           const webAppRes = await fetch('/api/auth/telegram/verify-webapp', {
             method: 'POST',
             credentials: 'include',
@@ -182,6 +191,39 @@ export default function App() {
   }, [payload?.liveDrops]);
 
   useEffect(() => {
+    if (!isAuthorized || !payload) {
+      prevUnlockedAchievementsRef.current = { userId: null, ids: new Set() };
+      return;
+    }
+
+    const currentIds = payload.user.unlockedAchievementIds ?? [];
+    if (prevUnlockedAchievementsRef.current.userId !== payload.user.id) {
+      prevUnlockedAchievementsRef.current = {
+        userId: payload.user.id,
+        ids: new Set(currentIds),
+      };
+      return;
+    }
+
+    const newlyUnlocked = currentIds.filter((id) => !prevUnlockedAchievementsRef.current.ids.has(id));
+    prevUnlockedAchievementsRef.current.ids = new Set(currentIds);
+
+    if (newlyUnlocked.length > 0) {
+      const titles = newlyUnlocked
+        .map((id) => ACHIEVEMENT_DEFINITIONS.find((def) => def.id === id)?.title ?? id)
+        .join(', ');
+      setRealtimeNotice({
+        text: `Новое достижение: «${titles}»! Заберите награду в профиле.`,
+        tab: 'profile',
+      });
+      setHasUnreadNotice(true);
+      if (noticeTimer.current !== null) window.clearTimeout(noticeTimer.current);
+      noticeTimer.current = window.setTimeout(() => setRealtimeNotice(null), 6500);
+      soundFX.playCoin();
+    }
+  }, [isAuthorized, payload?.user.id, payload?.user.unlockedAchievementIds]);
+
+  useEffect(() => {
     let stopped = false;
     const refreshDrops = async () => {
       try {
@@ -262,6 +304,57 @@ export default function App() {
       ...res.result,
       commitResult: () => setPayload(res.payload),
     };
+  };
+
+  const handleCraftContract = async (instanceIds: string[]): Promise<ContractCraftResult> => {
+    if (!payload) throw new Error('Пользователь не загружен.');
+    const res = await apiJson<{
+      payload: BootstrapPayload;
+      result: ContractCraftResult;
+    }>('/api/contracts/craft', {
+      method: 'POST',
+      body: JSON.stringify({ instanceIds }),
+    });
+    setPayload(res.payload);
+    return res.result;
+  };
+
+  const handleClaimCollectionReward = async (collection: string): Promise<CollectionSetReward> => {
+    if (!payload) throw new Error('Пользователь не загружен.');
+    const res = await apiJson<{
+      payload: BootstrapPayload;
+      reward: CollectionSetReward;
+    }>('/api/collections/claim', {
+      method: 'POST',
+      body: JSON.stringify({ collection }),
+    });
+    setPayload(res.payload);
+    return res.reward;
+  };
+
+  const handleClaimAchievement = async (achievementId: AchievementId): Promise<AchievementProgress> => {
+    if (!payload) throw new Error('Пользователь не загружен.');
+    const res = await apiJson<{
+      payload: BootstrapPayload;
+      achievement: AchievementProgress;
+    }>('/api/achievements/claim', {
+      method: 'POST',
+      body: JSON.stringify({ achievementId }),
+    });
+    setPayload(res.payload);
+    return res.achievement;
+  };
+
+  const handleUpdateProfileCustomization = async (params: {
+    equippedBadgeCollection?: string | null;
+    showcaseItemIds?: string[];
+  }) => {
+    if (!payload) throw new Error('Пользователь не загружен.');
+    const res = await apiJson<{ payload: BootstrapPayload }>('/api/profile/customization', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    });
+    setPayload(res.payload);
   };
 
   const handleSellItems = async (instanceIds: string[]) => {
@@ -459,6 +552,17 @@ export default function App() {
             />
           )}
 
+          {activeTab === 'contracts' && (
+            <ContractWorkbench
+              user={payload.user}
+              items={payload.items}
+              isAuthorized={isAuthorized}
+              onOpenTelegramLogin={() => setTelegramLoginOpen(true)}
+              onCraftContract={handleCraftContract}
+              onGoToCases={() => navigateToTab('cases')}
+            />
+          )}
+
           {activeTab === 'cases' && (
             <CasesView
               user={payload.user}
@@ -513,6 +617,9 @@ export default function App() {
               onDeclineFriendRequest={(id) => handleFriendRequest(id, false)}
               onRemoveFriend={handleRemoveFriend}
               onGetFriendProfile={handleGetFriendProfile}
+              onClaimCollectionReward={handleClaimCollectionReward}
+              onClaimAchievement={handleClaimAchievement}
+              onUpdateCustomization={handleUpdateProfileCustomization}
             />
           )}
 

@@ -1,6 +1,7 @@
-import React, { useMemo, useState } from 'react';
-import { BookOpen, Copy, Crown, ExternalLink, Trophy, Users, UserMinus, UserPlus, X, Coins, LayoutGrid, ShieldCheck } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { ArrowLeft, Award, BookOpen, Check, Copy, Crown, ExternalLink, Pencil, Trophy, Users, UserMinus, UserPlus, X, Coins, LayoutGrid, ShieldCheck } from 'lucide-react';
 import type {
+  AchievementId,
   BootstrapPayload,
   FriendProfile,
   FriendRequestSummary,
@@ -10,12 +11,16 @@ import type {
   TransactionType,
   UserProfile,
 } from '../types';
+import { evaluateAchievements, type AchievementProgress } from '../utils/achievements';
 import { resolveAssetUrl } from '../utils/assets';
 import { useCleanCardImage } from '../utils/cardCutout';
-import { getCollectionTextClass, resolveCardCollection } from '../utils/collections';
+import { getAvailableCollections, getCollectionTextClass, resolveCardCollection } from '../utils/collections';
+import { evaluateCollectionSetStatus, getCollectionBadgeMeta, type CollectionSetReward } from '../utils/collectionSets';
 import { formatTC, RARITY_LABELS } from '../utils/economics';
 import { getLevelProgress } from '../utils/progression';
 import { soundFX } from '../utils/sound';
+import { AchievementsSection } from './AchievementsSection';
+import { CardFrame } from './CardFrame';
 import { CollectionDiaryView } from './CollectionDiaryView';
 import { TelegramPaperPlaneIcon } from './TelegramLoginModal';
 import { GoatLogo } from './GoatLogo';
@@ -37,6 +42,12 @@ interface ProfileViewProps {
   onDeclineFriendRequest: (id: string) => Promise<void>;
   onRemoveFriend: (friendId: string) => Promise<void>;
   onGetFriendProfile: (friendId: string) => Promise<FriendProfile>;
+  onClaimCollectionReward?: (collection: string) => Promise<CollectionSetReward>;
+  onClaimAchievement?: (achievementId: AchievementId) => Promise<AchievementProgress>;
+  onUpdateCustomization?: (params: {
+    equippedBadgeCollection?: string | null;
+    showcaseItemIds?: string[];
+  }) => Promise<void>;
 }
 
 const TX_LABELS: Record<TransactionType, string> = {
@@ -52,6 +63,9 @@ const TX_LABELS: Record<TransactionType, string> = {
   daily_bonus: 'Ежедневный бонус',
   referral_bonus: 'Реферальный бонус',
   referral_commission: 'Реферальная комиссия 5%',
+  collection_bonus: 'Бонус за коллекцию',
+  contract_craft: 'Контракт 7-в-1',
+  achievement_reward: 'Награда за достижение',
 };
 
 const RARITY_TILE_ACCENT: Record<Rarity, { bar: string; glow: string }> = {
@@ -135,8 +149,24 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   onDeclineFriendRequest,
   onRemoveFriend,
   onGetFriendProfile,
+  onClaimCollectionReward,
+  onClaimAchievement,
+  onUpdateCustomization,
 }) => {
   const [showDiary, setShowDiary] = useState(false);
+  const [showAchievements, setShowAchievements] = useState(false);
+
+  useEffect(() => {
+    if (!isAuthorized) {
+      setShowDiary(false);
+      setShowAchievements(false);
+    }
+  }, [isAuthorized]);
+  const [customizeOpen, setCustomizeOpen] = useState(false);
+  const [draftBadge, setDraftBadge] = useState<string | null>(null);
+  const [draftShowcaseIds, setDraftShowcaseIds] = useState<string[]>([]);
+  const [customizeSaving, setCustomizeSaving] = useState(false);
+  const [customizeError, setCustomizeError] = useState('');
   const [historyTab, setHistoryTab] = useState<'ledger' | 'upgrades'>('ledger');
   const [friendCodeInput, setFriendCodeInput] = useState('');
   const [friendMessage, setFriendMessage] = useState('');
@@ -158,6 +188,50 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
 
   const levelInfo = useMemo(() => getLevelProgress(user.xp ?? 0), [user.xp]);
 
+  const achievementsSummary = useMemo(() => {
+    const list = evaluateAchievements(user, items);
+    return {
+      total: list.length,
+      unlocked: list.filter((entry) => entry.unlocked).length,
+      claimable: list.filter((entry) => entry.unlocked && !entry.claimed).length,
+    };
+  }, [user, items]);
+
+  const completedBadgeCollections = useMemo(() => {
+    return getAvailableCollections(items).filter(
+      (col) =>
+        evaluateCollectionSetStatus(
+          col,
+          items,
+          unlockedItemIds,
+          user.claimedCollectionRewards ?? []
+        ).isComplete
+    );
+  }, [items, unlockedItemIds, user.claimedCollectionRewards]);
+
+  const showcaseItems = useMemo(() => {
+    return (user.showcaseItemIds ?? [])
+      .map((id) => itemsMap.get(id))
+      .filter((item): item is ItemCard => Boolean(item))
+      .slice(0, 3);
+  }, [user.showcaseItemIds, itemsMap]);
+
+  const equippedBadgeMeta = useMemo(
+    () =>
+      user.equippedBadgeCollection
+        ? getCollectionBadgeMeta(user.equippedBadgeCollection)
+        : null,
+    [user.equippedBadgeCollection]
+  );
+
+  const unlockedCards = useMemo(
+    () =>
+      items
+        .filter((item) => unlockedItemIds.includes(item.id))
+        .sort((a, b) => b.price - a.price),
+    [items, unlockedItemIds]
+  );
+
   const inventoryEntries = useMemo(() => {
     return user.inventory
       .map((inv) => ({ inv, item: itemsMap.get(inv.itemId) }))
@@ -170,6 +244,42 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   );
   const topDrop = user.topDropItemId ? itemsMap.get(user.topDropItemId) : undefined;
   const inviteLink = `${window.location.origin}/?friend=${encodeURIComponent(user.friendCode)}`;
+
+  const openCustomizeModal = () => {
+    setDraftBadge(user.equippedBadgeCollection ?? null);
+    setDraftShowcaseIds([...(user.showcaseItemIds ?? [])].slice(0, 3));
+    setCustomizeError('');
+    setCustomizeOpen(true);
+  };
+
+  const toggleDraftShowcaseCard = (itemId: string) => {
+    setCustomizeError('');
+    setDraftShowcaseIds((prev) => {
+      if (prev.includes(itemId)) return prev.filter((id) => id !== itemId);
+      if (prev.length >= 3) {
+        setCustomizeError('В витрине может быть максимум 3 карточки.');
+        return prev;
+      }
+      return [...prev, itemId];
+    });
+  };
+
+  const saveCustomization = async () => {
+    if (!onUpdateCustomization || customizeSaving) return;
+    setCustomizeSaving(true);
+    setCustomizeError('');
+    try {
+      await onUpdateCustomization({
+        equippedBadgeCollection: draftBadge,
+        showcaseItemIds: draftShowcaseIds,
+      });
+      setCustomizeOpen(false);
+    } catch (err) {
+      setCustomizeError(err instanceof Error ? err.message : 'Не удалось сохранить витрину.');
+    } finally {
+      setCustomizeSaving(false);
+    }
+  };
 
   const handleSellAll = async () => {
     if (inventoryEntries.length === 0) return;
@@ -225,20 +335,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     }
   };
 
-  if (showDiary) {
-    return (
-      <CollectionDiaryView
-        items={items}
-        unlockedItemIds={unlockedItemIds}
-        totalXp={user.xp ?? 0}
-        isAuthorized={isAuthorized}
-        onBack={() => setShowDiary(false)}
-        onOpenTelegramLogin={onOpenTelegramLogin}
-      />
-    );
-  }
-
-  // Unauthorized Telegram gate matching Upgrader inventory panel
+  // Unauthorized Telegram gate matching Upgrader inventory panel (hides diary & achievements until authorized)
   if (!isAuthorized) {
     return (
       <div className="space-y-6">
@@ -259,10 +356,10 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
           <div className="space-y-1.5">
             <h2 className="text-lg font-display font-bold text-white">You are not authorized</h2>
             <p className="text-xs text-slate-400">
-              Войдите через Telegram, чтобы открыть личный профиль, уровень, опыт, инвентарь и интеграцию с ботом
+              Войдите через Telegram, чтобы открыть личный профиль, достижения, коллекционный дневник, уровень, опыт и инвентарь
             </p>
           </div>
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-2.5 pt-1">
+          <div className="flex items-center justify-center pt-1">
             <button
               type="button"
               onClick={onOpenTelegramLogin}
@@ -271,17 +368,65 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
               <span>Login via Telegram</span>
               <TelegramPaperPlaneIcon className="w-4 h-4" />
             </button>
-            <button
-              type="button"
-              onClick={() => setShowDiary(true)}
-              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-[#0D0F12] hover:bg-white/[0.06] border border-white/[0.1] text-slate-200 font-display font-semibold text-xs transition-colors cursor-pointer"
-            >
-              <BookOpen className="w-4 h-4 text-[#FACC15]" />
-              <span>Коллекционный дневник</span>
-              <span className="text-[11px] font-mono-num text-slate-400">0/{items.length}</span>
-            </button>
           </div>
         </section>
+      </div>
+    );
+  }
+
+  if (showDiary) {
+    return (
+      <CollectionDiaryView
+        items={items}
+        unlockedItemIds={unlockedItemIds}
+        claimedCollections={user.claimedCollectionRewards ?? []}
+        equippedBadgeCollection={user.equippedBadgeCollection ?? null}
+        totalXp={user.xp ?? 0}
+        isAuthorized={isAuthorized}
+        onBack={() => setShowDiary(false)}
+        onOpenTelegramLogin={onOpenTelegramLogin}
+        onClaimCollectionReward={onClaimCollectionReward}
+        onEquipBadge={
+          onUpdateCustomization
+            ? (collection) => onUpdateCustomization({ equippedBadgeCollection: collection })
+            : undefined
+        }
+      />
+    );
+  }
+
+  if (showAchievements) {
+    return (
+      <div className="space-y-6">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <button
+            type="button"
+            onClick={() => setShowAchievements(false)}
+            className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-[#14161A] hover:bg-[#1C1F26] border border-white/[0.08] text-xs font-semibold text-slate-200 transition-colors cursor-pointer"
+          >
+            <ArrowLeft className="w-4 h-4 text-[#FACC15]" />
+            <span>Назад в профиль</span>
+          </button>
+
+          <div className="flex items-center gap-2">
+            <Trophy className="w-5 h-5 text-[#FACC15]" />
+            <h1 className="text-lg sm:text-xl font-display font-black tracking-wider uppercase text-white">
+              Достижения
+            </h1>
+          </div>
+
+          <div className="text-xs font-mono-num text-slate-400">
+            Открыто: <span className="text-white font-bold">{achievementsSummary.unlocked}</span> /{' '}
+            {achievementsSummary.total}
+          </div>
+        </div>
+
+        <AchievementsSection
+          user={user}
+          items={items}
+          isAuthorized={isAuthorized}
+          onClaimAchievement={onClaimAchievement}
+        />
       </div>
     );
   }
@@ -325,6 +470,15 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             <div className="space-y-1">
               <div className="flex flex-wrap items-center gap-2">
                 <h2 className="text-xl font-display font-bold text-white">{user.username}</h2>
+                {equippedBadgeMeta && (
+                  <span
+                    data-testid="profile-equipped-badge"
+                    className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md border text-[11px] font-semibold ${equippedBadgeMeta.badgeStyleClass}`}
+                  >
+                    <Award className="w-3.5 h-3.5" />
+                    <span>{equippedBadgeMeta.badgeTitle}</span>
+                  </span>
+                )}
                 {user.telegramUsername && (
                   <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#2AABEE]/15 border border-[#2AABEE]/30 text-[11px] font-medium text-[#2AABEE]">
                     <TelegramPaperPlaneIcon className="w-3 h-3" />
@@ -340,19 +494,42 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={() => setShowDiary(true)}
-            className="inline-flex items-center justify-between sm:justify-center gap-3 px-4 py-2.5 rounded-xl bg-[#0D0F12] hover:bg-[#191D24] border border-[#FACC15]/30 hover:border-[#FACC15]/60 transition-all cursor-pointer shrink-0"
-          >
-            <span className="inline-flex items-center gap-2 text-xs font-display font-bold text-white">
-              <BookOpen className="w-4 h-4 text-[#FACC15]" />
-              <span>Коллекционный дневник</span>
-            </span>
-            <span className="px-2 py-0.5 rounded-md bg-[#FACC15]/15 text-[#FACC15] text-[11px] font-mono-num font-bold">
-              {unlockedCount} / {items.length}
-            </span>
-          </button>
+          <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+            <button
+              type="button"
+              data-testid="open-achievements-btn"
+              onClick={() => setShowAchievements(true)}
+              className="inline-flex items-center justify-between sm:justify-center gap-3 px-4 py-2.5 rounded-xl bg-[#0D0F12] hover:bg-[#191D24] border border-[#FACC15]/30 hover:border-[#FACC15]/60 transition-all cursor-pointer shrink-0"
+            >
+              <span className="inline-flex items-center gap-2 text-xs font-display font-bold text-white">
+                <Trophy className="w-4 h-4 text-[#FACC15]" />
+                <span>Достижения</span>
+              </span>
+              <span className="px-2 py-0.5 rounded-md bg-[#FACC15]/15 text-[#FACC15] text-[11px] font-mono-num font-bold">
+                {achievementsSummary.unlocked} / {achievementsSummary.total}
+              </span>
+              {achievementsSummary.claimable > 0 && (
+                <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 text-[10px] font-bold">
+                  +{achievementsSummary.claimable}
+                </span>
+              )}
+            </button>
+
+            <button
+              type="button"
+              data-testid="open-diary-btn"
+              onClick={() => setShowDiary(true)}
+              className="inline-flex items-center justify-between sm:justify-center gap-3 px-4 py-2.5 rounded-xl bg-[#0D0F12] hover:bg-[#191D24] border border-[#FACC15]/30 hover:border-[#FACC15]/60 transition-all cursor-pointer shrink-0"
+            >
+              <span className="inline-flex items-center gap-2 text-xs font-display font-bold text-white">
+                <BookOpen className="w-4 h-4 text-[#FACC15]" />
+                <span>Коллекционный дневник</span>
+              </span>
+              <span className="px-2 py-0.5 rounded-md bg-[#FACC15]/15 text-[#FACC15] text-[11px] font-mono-num font-bold">
+                {unlockedCount} / {items.length}
+              </span>
+            </button>
+          </div>
         </div>
 
         {/* Player Level & XP Progress Bar */}
@@ -456,6 +633,76 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
               {formatTC(user.totalUpgrades)}
             </div>
           </div>
+        </div>
+      </section>
+
+      {/* Profile 3-Card Showcase & Badge */}
+      <section
+        data-testid="profile-showcase"
+        className="bg-[#14161A] border border-white/[0.06] rounded-xl p-5 space-y-4"
+      >
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="space-y-0.5">
+            <div className="flex items-center gap-2">
+              <Award className="w-4 h-4 text-[#FACC15]" />
+              <h2 className="text-sm font-display font-bold text-white">Витрина профиля</h2>
+              <span className="text-[11px] font-mono-num text-slate-400">
+                ({showcaseItems.length}/3)
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-400">
+              Закрепите до 3 любимых открытых карточек — витрину и бейдж увидят ваши друзья
+            </p>
+          </div>
+
+          {onUpdateCustomization && (
+            <button
+              type="button"
+              data-testid="customize-showcase-btn"
+              onClick={openCustomizeModal}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[#0D0F12] hover:bg-[#191D24] border border-white/[0.1] hover:border-[#FACC15]/45 text-xs font-semibold text-white transition-colors cursor-pointer"
+            >
+              <Pencil className="w-3.5 h-3.5 text-[#FACC15]" />
+              <span>Настроить витрину и бейдж</span>
+            </button>
+          )}
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          {Array.from({ length: 3 }, (_, idx) => {
+            const card = showcaseItems[idx];
+            if (card) {
+              return (
+                <div
+                  key={`${card.id}-${idx}`}
+                  className="rounded-xl border border-white/[0.08] bg-[#0D0F12] p-3 flex items-center gap-3"
+                >
+                  <CardFrame item={card} size="xs" showPrice={false} />
+                  <div className="min-w-0 flex-1 space-y-0.5">
+                    <div className="text-xs font-bold text-white truncate">{card.name}</div>
+                    <div className="text-[10px] text-slate-400">{RARITY_LABELS[card.rarity]}</div>
+                    <div className={`text-[10px] font-medium ${getCollectionTextClass(resolveCardCollection(card))}`}>
+                      {resolveCardCollection(card)}
+                    </div>
+                    <div className="text-[11px] font-mono-num font-bold text-[#FACC15]">
+                      {formatTC(card.price)} TC
+                    </div>
+                  </div>
+                </div>
+              );
+            }
+            return (
+              <button
+                key={`empty-showcase-${idx}`}
+                type="button"
+                onClick={openCustomizeModal}
+                className="rounded-xl border border-dashed border-white/[0.08] bg-[#0D0F12]/60 hover:border-[#FACC15]/30 p-4 flex flex-col items-center justify-center text-center min-h-[108px] transition-colors cursor-pointer"
+              >
+                <span className="text-xs font-semibold text-slate-400">Слот #{idx + 1}</span>
+                <span className="text-[10px] text-slate-600 mt-0.5">Нажмите, чтобы закрепить карту</span>
+              </button>
+            );
+          })}
         </div>
       </section>
 
@@ -746,6 +993,162 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         )}
       </section>
 
+      {customizeOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm"
+          role="presentation"
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="customize-profile-title"
+            className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-white/10 bg-[#14161A] p-5 shadow-2xl space-y-5"
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h2 id="customize-profile-title" className="text-base font-display font-bold text-white">
+                  Настройка витрины и бейджа
+                </h2>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Бейджи открываются за 100% сбор коллекций, а в витрину можно закрепить до 3 открытых карт
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCustomizeOpen(false)}
+                aria-label="Закрыть настройку"
+                className="rounded-lg p-2 text-slate-400 hover:bg-white/10 hover:text-white cursor-pointer"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Badge Picker */}
+            <div className="space-y-2">
+              <div className="text-xs font-semibold text-slate-300">Бейдж профиля</div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => setDraftBadge(null)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors cursor-pointer ${
+                    draftBadge === null
+                      ? 'bg-white/15 border-white/30 text-white'
+                      : 'bg-[#0D0F12] border-white/[0.06] text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Без бейджа
+                </button>
+                {completedBadgeCollections.map((col) => {
+                  const meta = getCollectionBadgeMeta(col);
+                  const active = draftBadge === col;
+                  return (
+                    <button
+                      key={col}
+                      type="button"
+                      onClick={() => setDraftBadge(col)}
+                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
+                        active
+                          ? `${meta.badgeStyleClass} ring-2 ring-[#FACC15]/60`
+                          : 'bg-[#0D0F12] border-white/[0.08] text-slate-300 hover:border-white/25'
+                      }`}
+                    >
+                      <Award className="w-3.5 h-3.5" />
+                      <span>{meta.badgeTitle}</span>
+                      <span className="text-[10px] opacity-75">({col})</span>
+                    </button>
+                  );
+                })}
+                {completedBadgeCollections.length === 0 && (
+                  <span className="text-xs text-slate-500">
+                    Соберите любую коллекцию в дневнике полностью, чтобы открыть бейдж.
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* 3-Card Showcase Picker */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-semibold text-slate-300">
+                  Витрина карточек ({draftShowcaseIds.length}/3)
+                </span>
+                {draftShowcaseIds.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setDraftShowcaseIds([])}
+                    className="text-slate-400 hover:text-white underline cursor-pointer"
+                  >
+                    Сбросить витрину
+                  </button>
+                )}
+              </div>
+
+              {unlockedCards.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-white/10 py-8 text-center text-xs text-slate-500">
+                  Откройте хотя бы одну карту, чтобы закрепить её в витрине.
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 max-h-64 overflow-y-auto pr-1">
+                  {unlockedCards.map((card) => {
+                    const selected = draftShowcaseIds.includes(card.id);
+                    return (
+                      <button
+                        key={card.id}
+                        type="button"
+                        onClick={() => toggleDraftShowcaseCard(card.id)}
+                        className={`relative rounded-xl border p-2.5 flex items-center gap-2.5 text-left transition-all cursor-pointer ${
+                          selected
+                            ? 'border-[#FACC15] bg-[#FACC15]/10'
+                            : 'border-white/[0.06] bg-[#0D0F12] hover:border-white/20'
+                        }`}
+                      >
+                        <img
+                          src={resolveAssetUrl(card.imageUrl)}
+                          alt=""
+                          className="h-11 w-10 object-contain shrink-0"
+                        />
+                        <div className="min-w-0 flex-1">
+                          <div className="text-[11px] font-bold text-white truncate">{card.name}</div>
+                          <div className="text-[10px] text-slate-400">{RARITY_LABELS[card.rarity]}</div>
+                          <div className="text-[10px] font-mono-num text-[#FACC15]">
+                            {formatTC(card.price)} TC
+                          </div>
+                        </div>
+                        {selected && (
+                          <span className="w-5 h-5 rounded-full bg-[#FACC15] text-[#0B0D10] flex items-center justify-center shrink-0">
+                            <Check className="w-3 h-3" />
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {customizeError && <p className="text-xs text-rose-400">{customizeError}</p>}
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-white/[0.06]">
+              <button
+                type="button"
+                onClick={() => setCustomizeOpen(false)}
+                className="px-4 py-2 rounded-lg bg-[#0D0F12] hover:bg-white/[0.06] border border-white/[0.08] text-xs font-semibold text-slate-300 cursor-pointer"
+              >
+                Отмена
+              </button>
+              <button
+                type="button"
+                disabled={customizeSaving}
+                onClick={saveCustomization}
+                className="px-5 py-2 rounded-lg bg-[#FACC15] hover:bg-[#FDE047] text-[#0B0D10] text-xs font-display font-bold transition-colors cursor-pointer disabled:opacity-50"
+              >
+                {customizeSaving ? 'Сохраняем...' : 'Сохранить'}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
       {selectedFriend && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm" role="presentation">
           <section role="dialog" aria-modal="true" aria-labelledby="friend-profile-title" className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-white/10 bg-[#14161A] p-5 shadow-2xl">
@@ -756,20 +1159,52 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                 ) : (
                   <span className="flex h-12 w-12 items-center justify-center rounded-full font-bold text-slate-950" style={{ backgroundColor: selectedFriend.avatarColor }}>{selectedFriend.username.slice(0, 2).toUpperCase()}</span>
                 )}
-                <div className="min-w-0">
-                  <h2 id="friend-profile-title" className="truncate text-lg font-bold text-white">{selectedFriend.username}</h2>
+                <div className="min-w-0 space-y-0.5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h2 id="friend-profile-title" className="truncate text-lg font-bold text-white">{selectedFriend.username}</h2>
+                    <span className="px-2 py-0.5 rounded bg-[#FACC15]/15 border border-[#FACC15]/30 text-[10px] font-mono-num font-bold text-[#FACC15]">
+                      Ур. {getLevelProgress(selectedFriend.xp ?? 0).level}
+                    </span>
+                    {selectedFriend.equippedBadgeCollection && (() => {
+                      const friendBadge = getCollectionBadgeMeta(selectedFriend.equippedBadgeCollection);
+                      return (
+                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded border text-[10px] font-semibold ${friendBadge.badgeStyleClass}`}>
+                          <Award className="w-3 h-3" />
+                          {friendBadge.badgeTitle}
+                        </span>
+                      );
+                    })()}
+                  </div>
                   {selectedFriend.telegramUsername && <p className="truncate text-xs text-sky-300">@{selectedFriend.telegramUsername}</p>}
                 </div>
               </div>
               <button type="button" onClick={() => setSelectedFriend(null)} aria-label="Закрыть профиль друга" className="rounded-lg p-2 text-slate-400 hover:bg-white/10 hover:text-white"><X className="h-5 w-5" /></button>
             </div>
 
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
               <div className="rounded-lg bg-black/20 p-3"><div className="text-[10px] text-slate-500">Апгрейдов</div><div className="mt-1 font-mono-num font-bold text-white">{formatTC(selectedFriend.totalUpgrades)}</div></div>
               <div className="rounded-lg bg-black/20 p-3"><div className="text-[10px] text-slate-500">Побед</div><div className="mt-1 font-mono-num font-bold text-emerald-300">{formatTC(selectedFriend.wonUpgrades)}</div></div>
               <div className="rounded-lg bg-black/20 p-3"><div className="text-[10px] text-slate-500">Кейсов открыто</div><div className="mt-1 font-mono-num font-bold text-white">{formatTC(selectedFriend.totalCasesOpened)}</div></div>
               <div className="rounded-lg bg-black/20 p-3"><div className="text-[10px] text-slate-500">В инвентаре</div><div className="mt-1 font-mono-num font-bold text-white">{selectedFriend.inventory.length}</div></div>
+              <div className="rounded-lg bg-black/20 p-3"><div className="text-[10px] text-slate-500">Достижений</div><div className="mt-1 font-mono-num font-bold text-[#FACC15]">{selectedFriend.unlockedAchievementsCount ?? 0} / 9</div></div>
             </div>
+
+            {selectedFriend.showcaseItems && selectedFriend.showcaseItems.length > 0 && (
+              <div className="mt-4">
+                <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">Витрина друга</h3>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  {selectedFriend.showcaseItems.map((card) => (
+                    <div key={card.id} className="flex items-center gap-2 rounded-xl border border-[#FACC15]/20 bg-[#FACC15]/[0.04] p-2">
+                      <img src={resolveAssetUrl(card.imageUrl)} alt="" className="h-11 w-10 shrink-0 object-contain" />
+                      <div className="min-w-0">
+                        <div className="truncate text-[11px] font-bold text-white">{card.name}</div>
+                        <div className="text-[10px] font-mono-num text-[#FACC15]">{formatTC(card.price)} TC</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <div className="mt-4 rounded-xl border border-amber-300/15 bg-amber-300/[0.04] p-4">
               <div className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-amber-200"><Crown className="h-4 w-4" />Топ-дроп</div>

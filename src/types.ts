@@ -2,7 +2,7 @@ export type Rarity = 'common' | 'rare' | 'super_rare' | 'epic' | 'legendary';
 
 export type RollMode = 'under' | 'over';
 
-export type AppTab = 'upgrade' | 'cases' | 'battles' | 'bonuses' | 'profile';
+export type AppTab = 'upgrade' | 'contracts' | 'cases' | 'battles' | 'bonuses' | 'profile';
 export type BattleMode = 'cases' | 'upgrade';
 export type BattleStatus = 'waiting' | 'completed' | 'cancelled';
 
@@ -20,7 +20,7 @@ export interface InventoryItem {
   instanceId: string;
   itemId: string;
   acquiredAt: number;
-  source: 'starter' | 'upgrade' | 'case' | 'admin' | 'battle';
+  source: 'starter' | 'upgrade' | 'case' | 'admin' | 'battle' | 'contract';
 }
 
 export interface CaseBox {
@@ -46,7 +46,10 @@ export type TransactionType =
   | 'battle_win'
   | 'daily_bonus'
   | 'referral_bonus'
-  | 'referral_commission';
+  | 'referral_commission'
+  | 'collection_bonus'
+  | 'contract_craft'
+  | 'achievement_reward';
 
 export interface Transaction {
   id: string;
@@ -79,7 +82,7 @@ export interface LiveDropEntry {
   id: string;
   userName: string;
   itemId: string;
-  source: 'upgrade' | 'case';
+  source: 'upgrade' | 'case' | 'contract';
   multiplier?: number;
   createdAt: number;
 }
@@ -97,12 +100,39 @@ export interface FriendSummary {
   topDropPrice: number;
 }
 
+export type AchievementId =
+  | 'ACH_UPG_SNIPER'
+  | 'ACH_UPG_LOSE_STREAK'
+  | 'ACH_UPG_MULTI_WIN'
+  | 'ACH_DIARY_HALF'
+  | 'ACH_DIARY_FIRST_SET'
+  | 'ACH_DIARY_LEVEL_10'
+  | 'ACH_CASE_LEGEND'
+  | 'ACH_BATTLE_FIRST_WIN'
+  | 'ACH_SOCIAL_SQUAD';
+
+export type AchievementCategory = 'upgrades' | 'collection' | 'cases_social';
+
+export interface UserAchievementStats {
+  upgradeWinStreak: number;
+  maxUpgradeWinStreak: number;
+  upgradeLoseStreak: number;
+  maxUpgradeLoseStreak: number;
+  lowChanceUpgradeWin: boolean;
+  legendaryCaseDrop: boolean;
+  battleWins: number;
+}
+
 export interface FriendProfile {
   id: string;
   username: string;
   telegramUsername?: string;
   telegramPhotoUrl?: string;
   avatarColor: string;
+  xp?: number;
+  equippedBadgeCollection?: string | null;
+  showcaseItems?: ItemCard[];
+  unlockedAchievementsCount?: number;
   totalUpgrades: number;
   wonUpgrades: number;
   totalCasesOpened: number;
@@ -194,6 +224,12 @@ export interface UserProfile {
   totalCasesOpened: number;
   xp: number;
   unlockedItemIds: string[];
+  claimedCollectionRewards: string[];
+  equippedBadgeCollection: string | null;
+  showcaseItemIds: string[];
+  unlockedAchievementIds: AchievementId[];
+  claimedAchievementIds: AchievementId[];
+  achievementStats?: UserAchievementStats;
   inventory: InventoryItem[];
   createdAt: number;
 }

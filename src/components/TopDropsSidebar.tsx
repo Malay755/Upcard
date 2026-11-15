@@ -62,7 +62,7 @@ export const TopDropsSidebar: React.FC<TopDropsSidebarProps> = ({ liveDrops, ite
                   className="h-full w-full object-contain drop-shadow-lg"
                 />
                 <span className="absolute bottom-1 left-1.5 rounded bg-black/65 px-1.5 py-0.5 text-[9px] font-bold text-white">
-                  {drop.source === 'case' ? 'КЕЙС' : 'АПГРЕЙД'}
+                  {drop.source === 'case' ? 'КЕЙС' : drop.source === 'contract' ? 'КОНТРАКТ' : 'АПГРЕЙД'}
                 </span>
                 <time
                   className="absolute right-1.5 top-1 rounded bg-black/55 px-1 py-0.5 text-[9px] text-slate-300"
