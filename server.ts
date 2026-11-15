@@ -369,7 +369,7 @@ function createInitialDb(): DatabaseSchema {
     },
     {
       id: 'card_crazy_artemiy',
-      name: 'Сумашедший Артемий',
+      name: 'Сумасшедший Артемий',
       rarity: 'legendary',
       collection: 'Артемий',
       price: 7800,
@@ -394,121 +394,308 @@ function createInitialDb(): DatabaseSchema {
       imageUrl: '/assets/cards/tenet_t4.png',
       createdAt: now - 3600000 * 6,
     },
+    {
+      id: 'card_timur_derevenshchina',
+      name: 'Тимур Деревенщина',
+      rarity: 'rare',
+      collection: 'Тимур',
+      price: 310,
+      imageUrl: '/assets/cards/timur_derevenshchina.png',
+      createdAt: now - 3600000 * 5.8,
+    },
+    {
+      id: 'card_fat_kirill',
+      name: 'Толстый Кирилл',
+      rarity: 'rare',
+      collection: 'Кирилл',
+      price: 390,
+      imageUrl: '/assets/cards/fat_kirill.png',
+      createdAt: now - 3600000 * 5.6,
+    },
+    {
+      id: 'card_timur_snack',
+      name: 'Перекус Тимура',
+      rarity: 'rare',
+      collection: 'Тимур',
+      price: 430,
+      imageUrl: '/assets/cards/timur_snack.png',
+      createdAt: now - 3600000 * 5.4,
+    },
+    {
+      id: 'card_kirill_shorts',
+      name: 'Трусы Кирилла',
+      rarity: 'rare',
+      collection: 'Кирилл',
+      price: 510,
+      imageUrl: '/assets/cards/kirill_shorts.png',
+      createdAt: now - 3600000 * 5.2,
+    },
+    {
+      id: 'card_campfire_talk',
+      name: 'Беседа у Костра',
+      rarity: 'rare',
+      collection: 'Сквад',
+      price: 540,
+      imageUrl: '/assets/cards/campfire_talk.png',
+      createdAt: now - 3600000 * 5.0,
+    },
+    {
+      id: 'card_ahegao_artemiy',
+      name: 'Ахегао Артемий',
+      rarity: 'rare',
+      collection: 'Артемий',
+      price: 610,
+      imageUrl: '/assets/cards/ahegao_artemiy.png',
+      createdAt: now - 3600000 * 4.8,
+    },
+    {
+      id: 'card_schumachers',
+      name: 'Шумахеры',
+      rarity: 'rare',
+      collection: 'Сквад',
+      price: 650,
+      imageUrl: '/assets/cards/schumachers.png',
+      createdAt: now - 3600000 * 4.6,
+    },
+    {
+      id: 'card_timur_ai',
+      name: 'Тимур AI',
+      rarity: 'super_rare',
+      collection: 'Тимур',
+      price: 820,
+      imageUrl: '/assets/cards/timur_ai.png',
+      createdAt: now - 3600000 * 4.4,
+    },
+    {
+      id: 'card_artemiy_derp',
+      name: 'Артемий Дерп',
+      rarity: 'super_rare',
+      collection: 'Артемий',
+      price: 890,
+      imageUrl: '/assets/cards/artemiy_derp.png',
+      createdAt: now - 3600000 * 4.2,
+    },
+    {
+      id: 'card_emo_michael',
+      name: 'Майкл Эмо',
+      rarity: 'super_rare',
+      collection: 'Майкл',
+      price: 1040,
+      imageUrl: '/assets/cards/emo_michael.png',
+      createdAt: now - 3600000 * 4.0,
+    },
+    {
+      id: 'card_bro_kirill',
+      name: 'Братан Кирилл',
+      rarity: 'super_rare',
+      collection: 'Кирилл',
+      price: 1120,
+      imageUrl: '/assets/cards/bro_kirill.png',
+      createdAt: now - 3600000 * 3.8,
+    },
+    {
+      id: 'card_farmer_timur',
+      name: 'Фермер Тимур',
+      rarity: 'super_rare',
+      collection: 'Тимур',
+      price: 1190,
+      imageUrl: '/assets/cards/farmer_timur.png',
+      createdAt: now - 3600000 * 3.6,
+    },
+    {
+      id: 'card_ptu_ninja',
+      name: 'Ниндзя Скрытого ПТУ',
+      rarity: 'super_rare',
+      collection: 'Кирилл',
+      price: 1280,
+      imageUrl: '/assets/cards/ptu_ninja.png',
+      createdAt: now - 3600000 * 3.4,
+    },
+    {
+      id: 'card_crazy_vanya',
+      name: 'Сумасшедший Ваня',
+      rarity: 'epic',
+      collection: 'Ваня',
+      price: 2250,
+      imageUrl: '/assets/cards/crazy_vanya.png',
+      createdAt: now - 3600000 * 3.2,
+    },
+    {
+      id: 'card_moscow_adventure',
+      name: 'Московская Авантюра',
+      rarity: 'epic',
+      collection: 'Сквад',
+      price: 2780,
+      imageUrl: '/assets/cards/moscow_adventure.png',
+      createdAt: now - 3600000 * 3.0,
+    },
+    {
+      id: 'card_timur_svo',
+      name: 'Тимур СВО',
+      rarity: 'legendary',
+      collection: 'Тимур',
+      price: 6900,
+      imageUrl: '/assets/cards/timur_svo.png',
+      createdAt: now - 3600000 * 2.8,
+    },
+    {
+      id: 'card_alpha_timur',
+      name: 'Альфа Тимур',
+      rarity: 'legendary',
+      collection: 'Тимур',
+      price: 11500,
+      imageUrl: '/assets/cards/alpha_timur.png',
+      createdAt: now - 3600000 * 2.6,
+    },
   ];
 
   const cases: CaseBox[] = [
     {
       id: 'case_starter',
       name: 'Зелёный Старт',
-      description: 'Входной кейс с карточками Артемия и Майкла Пиздюка плюс шанс выбить сверхредкий и эпический дроп.',
+      description: 'Входной кейс с редкими карточками Тимура, Кирилла, Артемия и шансом выбить сверхредкий и эпический дроп.',
       price: 390,
       tier: 'rare',
-      imageUrl: '/src/assets/images/case_epic_crate_1794514882592.jpg',
+      imageUrl: '/assets/cases/case_starter.png',
       itemIds: [
+        'card_timur_derevenshchina',
         'card_artemiy_daun',
+        'card_fat_kirill',
+        'card_timur_snack',
         'card_michael_pizdyuk',
         'card_hustler_artemiy',
+        'card_timur_ai',
         'card_spy_michael',
         'card_down_timur',
         'card_kiri_chan',
       ],
-      rarityWeights: { common: 0, rare: 70, super_rare: 12, epic: 18, legendary: 0 },
+      rarityWeights: { common: 0, rare: 68, super_rare: 16, epic: 16, legendary: 0 },
     },
     {
       id: 'case_hustle',
       name: 'Ночной Хастл',
-      description: 'Изумрудный хастл-микс со ставкой на Шпиона Майкла, Бухого Артемия, Дауна Тимура и Усатого Ваню.',
+      description: 'Изумрудный хастл-микс: Шумахеры, Ахегао Артемий, Трусы Кирилла, сверхредкие и эпический драйв.',
       price: 690,
       tier: 'rare',
-      imageUrl: '/src/assets/images/case_epic_crate_1794514882592.jpg',
+      imageUrl: '/assets/cases/case_hustle.png',
       itemIds: [
         'card_artemiy_daun',
         'card_michael_pizdyuk',
+        'card_kirill_shorts',
+        'card_campfire_talk',
         'card_hustler_artemiy',
+        'card_ahegao_artemiy',
+        'card_schumachers',
+        'card_artemiy_derp',
         'card_spy_michael',
+        'card_emo_michael',
         'card_down_timur',
         'card_drunk_artemiy',
         'card_kiri_chan',
         'card_usaty_vanya',
       ],
-      rarityWeights: { common: 0, rare: 48, super_rare: 18, epic: 34, legendary: 0 },
+      rarityWeights: { common: 0, rare: 48, super_rare: 24, epic: 28, legendary: 0 },
     },
     {
       id: 'case_spy_cobalt',
       name: 'Кобальт Шпион',
-      description: 'Синий сверхредкий кейс с главным дропом Шпиона Майкла, 4Б и эпической поддержкой сквада.',
+      description: 'Синий сверхредкий кейс: Шпион Майкл, Майкл Эмо, Тимур AI, Братан Кирилл, Фермер Тимур и Ниндзя ПТУ.',
       price: 940,
       tier: 'super_rare',
-      imageUrl: '/src/assets/images/case_epic_crate_1794514882592.jpg',
+      imageUrl: '/assets/cases/case_spy_cobalt.png',
       itemIds: [
         'card_michael_pizdyuk',
         'card_hustler_artemiy',
+        'card_schumachers',
+        'card_timur_ai',
+        'card_artemiy_derp',
         'card_spy_michael',
+        'card_emo_michael',
+        'card_bro_kirill',
+        'card_farmer_timur',
+        'card_ptu_ninja',
         'card_class_4b',
         'card_hunchback_timur',
+        'card_crazy_vanya',
         'card_eblany',
       ],
-      rarityWeights: { common: 0, rare: 24, super_rare: 48, epic: 28, legendary: 0 },
+      rarityWeights: { common: 0, rare: 20, super_rare: 52, epic: 28, legendary: 0 },
     },
     {
       id: 'case_cosmos',
       name: 'Космос Сквад',
-      description: 'Баланс сверхредких и эпических карт (4Б, Горбатый Тимур, Ебланы) с шансом сорвать легендарного Фотографа Тимура.',
+      description: 'Баланс сверхредких и эпических карт сквада с Московской Авантюрой, Ниндзя ПТУ и шансом сорвать легенду.',
       price: 1450,
       tier: 'epic',
-      imageUrl: '/src/assets/images/case_epic_crate_1794514882592.jpg',
+      imageUrl: '/assets/cases/case_cosmos.png',
       itemIds: [
         'card_artemiy_daun',
+        'card_campfire_talk',
         'card_hustler_artemiy',
+        'card_schumachers',
         'card_spy_michael',
+        'card_ptu_ninja',
         'card_down_timur',
         'card_kiri_chan',
         'card_class_4b',
         'card_hunchback_timur',
+        'card_crazy_vanya',
         'card_usaty_vanya',
         'card_eblany',
+        'card_moscow_adventure',
         'card_jopa_michaela',
         'card_photographer_timur',
         'card_timur_volga',
+        'card_timur_svo',
       ],
-      rarityWeights: { common: 0, rare: 22, super_rare: 16, epic: 52, legendary: 10 },
+      rarityWeights: { common: 0, rare: 18, super_rare: 24, epic: 48, legendary: 10 },
     },
     {
       id: 'case_drip_legend',
       name: 'Дрип Легенд',
-      description: 'Флагманский золотой кейс с повышенным шансом на Сумашедшего Артемия, Фотографа Тимура и Ваню Дрипчика.',
+      description: 'Флагманский золотой кейс с повышенным шансом на Тимура СВО, Альфа Тимура, Сумасшедшего Артемия и Ваню Дрипчика.',
       price: 3200,
       tier: 'legendary',
-      imageUrl: '/src/assets/images/case_legend_crate_1794514881507.jpg',
+      imageUrl: '/assets/cases/case_drip_legend.png',
       itemIds: [
         'card_hustler_artemiy',
+        'card_bro_kirill',
+        'card_farmer_timur',
         'card_down_timur',
         'card_class_4b',
+        'card_crazy_vanya',
         'card_usaty_vanya',
         'card_eblany',
+        'card_moscow_adventure',
         'card_jopa_michaela',
         'card_photographer_timur',
         'card_timur_volga',
+        'card_timur_svo',
         'card_crazy_artemiy',
         'card_vanya_dripchik',
+        'card_alpha_timur',
       ],
-      rarityWeights: { common: 0, rare: 14, super_rare: 0, epic: 54, legendary: 32 },
+      rarityWeights: { common: 0, rare: 12, super_rare: 12, epic: 46, legendary: 30 },
     },
     {
       id: 'case_tenet_vip',
       name: 'TENET Автосалон VIP',
-      description: 'Элитный кейс только с топовыми эпиками и золотыми легендами, включая Сумашедшего Артемия и TENET T4.',
+      description: 'Элитный кейс только с топовыми эпиками и золотыми легендами, включая Тимура СВО, Альфа Тимура и TENET T4.',
       price: 5400,
       tier: 'legendary',
-      imageUrl: '/src/assets/images/case_legend_crate_1794514881507.jpg',
+      imageUrl: '/assets/cases/case_tenet_vip.png',
       itemIds: [
         'card_kiri_chan',
+        'card_crazy_vanya',
         'card_usaty_vanya',
         'card_eblany',
+        'card_moscow_adventure',
         'card_jopa_michaela',
         'card_timur_volga',
+        'card_timur_svo',
         'card_crazy_artemiy',
         'card_vanya_dripchik',
+        'card_alpha_timur',
         'card_tenet_t4',
       ],
       rarityWeights: { common: 0, rare: 0, super_rare: 0, epic: 52, legendary: 48 },
@@ -516,92 +703,148 @@ function createInitialDb(): DatabaseSchema {
     {
       id: 'case_custom_artemiy',
       name: 'Артемий на районе',
-      description: 'Авторский кейс с фокусом на серию Артемия (включая Бухого и Сумашедшего Артемия) и разгон банка.',
+      description: 'Авторский кейс с фокусом на серию Артемия: Ахегао Артемий, Артемий Дерп, Бухой и Сумасшедший Артемий.',
       price: 450,
       tier: 'rare',
-      imageUrl: '/src/assets/images/case_epic_crate_1794514882592.jpg',
+      imageUrl: '/assets/cases/case_custom_artemiy.png',
       itemIds: [
         'card_artemiy_daun',
         'card_hustler_artemiy',
+        'card_ahegao_artemiy',
+        'card_artemiy_derp',
         'card_spy_michael',
         'card_down_timur',
         'card_drunk_artemiy',
         'card_usaty_vanya',
         'card_crazy_artemiy',
       ],
-      rarityWeights: { common: 0, rare: 58, super_rare: 12, epic: 26, legendary: 4 },
+      rarityWeights: { common: 0, rare: 52, super_rare: 20, epic: 23, legendary: 5 },
     },
     {
       id: 'case_custom_timur',
       name: 'Закат на Волге',
-      description: 'Авторская охота за золотыми картами «Фотограф Тимур» и «Тимур на Волге» с эпическим прикрытием.',
+      description: 'Авторская охота за серией Тимура: Деревенщина, AI, Фермер Тимур, Тимур СВО, Фотограф и Альфа Тимур.',
       price: 1950,
       tier: 'epic',
-      imageUrl: '/src/assets/images/case_legend_crate_1794514881507.jpg',
+      imageUrl: '/assets/cases/case_custom_timur.png',
       itemIds: [
+        'card_timur_derevenshchina',
+        'card_timur_snack',
         'card_hustler_artemiy',
+        'card_timur_ai',
+        'card_farmer_timur',
         'card_down_timur',
         'card_hunchback_timur',
         'card_jopa_michaela',
         'card_photographer_timur',
         'card_timur_volga',
+        'card_timur_svo',
+        'card_alpha_timur',
       ],
-      rarityWeights: { common: 0, rare: 22, super_rare: 0, epic: 54, legendary: 24 },
+      rarityWeights: { common: 0, rare: 18, super_rare: 22, epic: 36, legendary: 24 },
     },
     {
       id: 'case_custom_purple',
       name: 'Фиолетовый вайб',
-      description: 'Концентрированный эпик-кейс: 4Б, Бухой Артемий, Горбатый Тимур, Ебланы и вся фиолетовая элита.',
+      description: 'Концентрированный эпик-кейс: 4Б, Бухой Артемий, Сумасшедший Ваня, Московская Авантюра и вся фиолетовая элита.',
       price: 1750,
       tier: 'epic',
-      imageUrl: '/src/assets/images/case_epic_crate_1794514882592.jpg',
+      imageUrl: '/assets/cases/case_custom_purple.png',
       itemIds: [
         'card_hustler_artemiy',
+        'card_ptu_ninja',
         'card_down_timur',
         'card_drunk_artemiy',
         'card_kiri_chan',
         'card_class_4b',
         'card_hunchback_timur',
+        'card_crazy_vanya',
         'card_usaty_vanya',
         'card_eblany',
+        'card_moscow_adventure',
         'card_jopa_michaela',
       ],
-      rarityWeights: { common: 0, rare: 15, super_rare: 0, epic: 85, legendary: 0 },
+      rarityWeights: { common: 0, rare: 12, super_rare: 14, epic: 74, legendary: 0 },
     },
     {
       id: 'case_custom_vanya',
       name: 'Секрет Вани (EZ)',
-      description: 'Ультра-рисковый авторский кейс с повышенным шансом выбить Ваню Дрипчика и Сумашедшего Артемия.',
+      description: 'Ультра-рисковый авторский кейс с повышенным шансом выбить Сумасшедшего Ваню, Ваню Дрипчика и Альфа Тимура.',
       price: 4200,
       tier: 'legendary',
-      imageUrl: '/src/assets/images/case_legend_crate_1794514881507.jpg',
+      imageUrl: '/assets/cases/case_custom_vanya.png',
       itemIds: [
         'card_kiri_chan',
         'card_class_4b',
+        'card_crazy_vanya',
         'card_usaty_vanya',
         'card_timur_volga',
         'card_crazy_artemiy',
         'card_vanya_dripchik',
+        'card_alpha_timur',
       ],
       rarityWeights: { common: 0, rare: 0, super_rare: 0, epic: 60, legendary: 40 },
     },
     {
       id: 'case_custom_oligarch',
       name: 'Золотой Олимп',
-      description: 'Высокие ставки ради топового автопарка TENET T4 и всей золотой коллекции легендарных карт.',
+      description: 'Высокие ставки ради топового автопарка TENET T4, Альфа Тимура и всей золотой коллекции легендарных карт.',
       price: 6800,
       tier: 'legendary',
-      imageUrl: '/src/assets/images/case_legend_crate_1794514881507.jpg',
+      imageUrl: '/assets/cases/case_custom_oligarch.png',
       itemIds: [
         'card_usaty_vanya',
+        'card_moscow_adventure',
         'card_jopa_michaela',
         'card_photographer_timur',
         'card_timur_volga',
+        'card_timur_svo',
         'card_crazy_artemiy',
         'card_vanya_dripchik',
+        'card_alpha_timur',
         'card_tenet_t4',
       ],
       rarityWeights: { common: 0, rare: 0, super_rare: 0, epic: 42, legendary: 58 },
+    },
+    {
+      id: 'case_ptu_kobalt',
+      name: 'Скрытое ПТУ',
+      description: 'Тематический кейс новой волны: вся линейка сверхредких карт Кирилла, Майкла Эмо, Ниндзя ПТУ и редкие мемы сквада.',
+      price: 1100,
+      tier: 'super_rare',
+      imageUrl: '/assets/cases/case_ptu_kobalt.png',
+      itemIds: [
+        'card_fat_kirill',
+        'card_kirill_shorts',
+        'card_campfire_talk',
+        'card_timur_ai',
+        'card_artemiy_derp',
+        'card_emo_michael',
+        'card_bro_kirill',
+        'card_farmer_timur',
+        'card_ptu_ninja',
+        'card_crazy_vanya',
+        'card_moscow_adventure',
+      ],
+      rarityWeights: { common: 0, rare: 28, super_rare: 52, epic: 20, legendary: 0 },
+    },
+    {
+      id: 'case_alpha_timur',
+      name: 'Альфа & СВО',
+      description: 'Премиальный микс с новой золотой гвардией: Тимур СВО и Альфа Тимур под прикрытием Фермера, Ниндзя ПТУ и Авантюры.',
+      price: 3600,
+      tier: 'legendary',
+      imageUrl: '/assets/cases/case_alpha_timur.png',
+      itemIds: [
+        'card_timur_snack',
+        'card_farmer_timur',
+        'card_ptu_ninja',
+        'card_crazy_vanya',
+        'card_moscow_adventure',
+        'card_timur_svo',
+        'card_alpha_timur',
+      ],
+      rarityWeights: { common: 0, rare: 12, super_rare: 22, epic: 34, legendary: 32 },
     },
   ];
 
@@ -744,6 +987,8 @@ function createInitialDb(): DatabaseSchema {
     friendRequests: [],
     battleInvitations: [],
     battles: [],
+    catalogVersion: 7,
+    economyVersion: 4,
   };
 }
 
@@ -860,7 +1105,7 @@ function normalizeStoredDb(value: unknown): DatabaseSchema {
 
   const DEPRECATED_DUPLICATE_IDS = new Set(['card_spy_michael_epic']);
 
-  if ((parsed.catalogVersion ?? 0) < 4) {
+  if ((parsed.catalogVersion ?? 0) < 7) {
     const seedItemsById = new Map(seed.items.map((seedItem) => [seedItem.id, seedItem]));
     normalized.items = normalized.items
       .filter((item) => !DEPRECATED_DUPLICATE_IDS.has(item.id))
@@ -930,7 +1175,7 @@ function normalizeStoredDb(value: unknown): DatabaseSchema {
       const itemsById = new Map(normalized.items.map((it) => [it.id, it]));
       const minXp = unlockedIds.reduce((sum, id) => sum + getCardDiscoveryXp(itemsById.get(id)), 0);
       const unlockedSet = new Set(unlockedIds);
-      return {
+      const syncedUser: UserProfile = {
         ...user,
         inventory: cleanedInventory,
         unlockedItemIds: unlockedIds,
@@ -943,12 +1188,20 @@ function normalizeStoredDb(value: unknown): DatabaseSchema {
         topDropItemId: needsTopDropRecompute ? (nextTopDrop?.id ?? null) : user.topDropItemId,
         topDropPrice: needsTopDropRecompute ? (nextTopDrop?.price ?? 0) : user.topDropPrice,
       };
+      syncUserAchievements(
+        syncedUser,
+        normalized.items,
+        normalized.upgradeHistory,
+        normalized.transactions,
+        normalized.battles
+      );
+      return syncedUser;
     });
 
     normalized.liveDrops = normalized.liveDrops.filter((drop) => !DEPRECATED_DUPLICATE_IDS.has(drop.itemId));
     normalized.upgradeHistory = normalized.upgradeHistory.filter((entry) => !DEPRECATED_DUPLICATE_IDS.has(entry.targetItemId));
-    normalized.catalogVersion = 4;
-    normalized.economyVersion = 3;
+    normalized.catalogVersion = 7;
+    normalized.economyVersion = 4;
   } else {
     normalized.items = normalized.items.map((item) => ({
       ...item,
@@ -956,7 +1209,7 @@ function normalizeStoredDb(value: unknown): DatabaseSchema {
     }));
   }
 
-  if ((parsed.economyVersion ?? 0) < 3 || (parsed.catalogVersion ?? 0) < 4) {
+  if ((parsed.economyVersion ?? 0) < 4 || (parsed.catalogVersion ?? 0) < 7) {
     for (const caseBox of normalized.cases) {
       const caseItems = caseBox.itemIds
         .map((id) => normalized.items.find((item) => item.id === id))
@@ -964,7 +1217,7 @@ function normalizeStoredDb(value: unknown): DatabaseSchema {
       const fairPrice = recommendedCasePrice(calculateCaseExpectedValue(caseBox, caseItems));
       if (fairPrice > 0) caseBox.price = fairPrice;
     }
-    normalized.economyVersion = 3;
+    normalized.economyVersion = 4;
   }
   return normalized;
 }
@@ -1281,11 +1534,17 @@ function adminUser(req: express.Request, res: express.Response): UserProfile | n
   return user;
 }
 
-function setSessionCookie(res: express.Response, token: string) {
+function isHttpsRequest(req: express.Request): boolean {
+  const forwardedProto = String(req.headers['x-forwarded-proto'] ?? '').toLowerCase();
+  return req.secure || forwardedProto.includes('https') || process.env.NODE_ENV === 'production';
+}
+
+function setSessionCookie(req: express.Request, res: express.Response, token: string) {
+  const https = isHttpsRequest(req);
   res.cookie('cardup_tg_session', token, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
+    secure: https,
+    sameSite: https ? 'none' : 'lax',
     path: '/',
     maxAge: 1000 * 60 * 60 * 24 * 30,
   });
@@ -1580,6 +1839,7 @@ function saveDataUrlImageIfNeeded(imageUrl: string): string {
 async function startServer() {
   await initializePostgres();
   const app = express();
+  app.set('trust proxy', 1);
   app.use(express.json({ limit: '10mb' }));
   app.use('/uploads', express.static(UPLOADS_DIR));
   usePostgresState(app);
@@ -1590,8 +1850,9 @@ async function startServer() {
 
   const telegramBotToken = (process.env.TELEGRAM_BOT_TOKEN ?? '').trim();
   const telegramWebAppUrl = (
-    process.env.TELEGRAM_WEBAPP_URL ??
-    process.env.APP_URL ??
+    process.env.TELEGRAM_WEBAPP_URL ||
+    process.env.RENDER_EXTERNAL_URL ||
+    process.env.APP_URL ||
     ''
   ).trim();
   let telegramBotUsername = (
@@ -1876,7 +2137,13 @@ async function startServer() {
         saveDb();
       }
     }
-    res.clearCookie('cardup_tg_session', { path: '/' });
+    const https = isHttpsRequest(req);
+    res.clearCookie('cardup_tg_session', {
+      path: '/',
+      httpOnly: true,
+      secure: https,
+      sameSite: https ? 'none' : 'lax',
+    });
     res.json({ ok: true });
   });
 
@@ -1909,7 +2176,7 @@ async function startServer() {
     });
 
     const sessionToken = issueSessionToken(user.id);
-    setSessionCookie(res, sessionToken);
+    setSessionCookie(req, res, sessionToken);
     res.json({ payload: buildPayload(user.id, true) });
   });
 
@@ -1946,7 +2213,7 @@ async function startServer() {
     });
 
     const sessionToken = issueSessionToken(user.id);
-    setSessionCookie(res, sessionToken);
+    setSessionCookie(req, res, sessionToken);
     res.json({ payload: buildPayload(user.id, true) });
   });
 

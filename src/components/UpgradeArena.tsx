@@ -2,8 +2,10 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom';
 import {
   ArrowUpDown,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
   Coins,
   LayoutGrid,
   RefreshCw,
@@ -50,35 +52,7 @@ interface UpgradeArenaProps {
 }
 
 const TEN_PERCENT_ANGLES = [0, 36, 72, 108, 144, 180, 216, 252, 288, 324];
-const ITEMS_PER_PAGE = 16;
-
-const RARITY_CARD_ACCENT: Record<Rarity, { bar: string; glow: string; borderSelected: string }> = {
-  common: {
-    bar: 'bg-slate-400',
-    glow: 'from-slate-400/15',
-    borderSelected: 'border-[#FACC15] bg-[#242014] shadow-[0_0_16px_rgba(250,204,21,0.22)]',
-  },
-  rare: {
-    bar: 'bg-emerald-400',
-    glow: 'from-emerald-500/20',
-    borderSelected: 'border-[#FACC15] bg-[#1F2217] shadow-[0_0_16px_rgba(250,204,21,0.22)]',
-  },
-  super_rare: {
-    bar: 'bg-sky-400',
-    glow: 'from-sky-500/20',
-    borderSelected: 'border-[#FACC15] bg-[#16202B] shadow-[0_0_16px_rgba(250,204,21,0.22)]',
-  },
-  epic: {
-    bar: 'bg-purple-400',
-    glow: 'from-purple-500/20',
-    borderSelected: 'border-[#FACC15] bg-[#211B2B] shadow-[0_0_16px_rgba(250,204,21,0.22)]',
-  },
-  legendary: {
-    bar: 'bg-[#FACC15]',
-    glow: 'from-amber-400/25',
-    borderSelected: 'border-[#FACC15] bg-[#2B2413] shadow-[0_0_18px_rgba(250,204,21,0.28)]',
-  },
-};
+const ITEMS_PER_PAGE = 12;
 
 const TARGET_SLOT_GLOW: Record<
   Rarity,
@@ -144,69 +118,6 @@ const CardSilhouetteSvg: React.FC<{ className?: string }> = ({ className = 'w-44
     <path d="M51 27h58v40H51zM51 74h36v4H51zm0 9h25v3H51z" opacity=".72" />
   </svg>
 );
-
-const CompactCatalogTile: React.FC<{
-  item: ItemCard;
-  selected: boolean;
-  disabledByPrice: boolean;
-  onSelect: () => void;
-}> = ({ item, selected, disabledByPrice, onSelect }) => {
-  const { displayUrl } = useCleanCardImage(resolveAssetUrl(item.imageUrl));
-  const style = RARITY_CARD_ACCENT[item.rarity] ?? RARITY_CARD_ACCENT.common;
-  const collection = resolveCardCollection(item);
-
-  return (
-    <button
-      type="button"
-      onClick={onSelect}
-      className={`group relative rounded-lg overflow-hidden border text-left transition-all duration-150 cursor-pointer p-2.5 flex flex-col justify-between h-[156px] bg-gradient-to-b ${style.glow} via-[#181B22] to-[#121419] ${
-        selected
-          ? style.borderSelected
-          : 'border-white/[0.06] hover:border-white/20 hover:-translate-y-0.5'
-      } ${disabledByPrice ? 'opacity-40' : ''}`}
-    >
-      {/* Thin top rarity accent bar */}
-      <span aria-hidden="true" className={`absolute top-0 inset-x-0 h-[2px] ${style.bar}`} />
-
-      {/* Top row: TC price + subtle rarity tag */}
-      <div className="relative z-10 flex items-center justify-between gap-1">
-        <span className="inline-flex items-center gap-1 text-[11px] font-mono-num font-bold text-[#FACC15]">
-          <span>{formatTC(item.price)}</span>
-          <span className="w-2.5 h-2.5 rounded-full bg-[#FACC15] text-[#0B0D10] text-[7px] font-black inline-flex items-center justify-center">
-            T
-          </span>
-        </span>
-        {selected && (
-          <span className="w-4 h-4 rounded bg-[#FACC15] text-[#0B0D10] text-[10px] font-black flex items-center justify-center">
-            ✓
-          </span>
-        )}
-      </div>
-
-      {/* Centered Card Artwork */}
-      <div className="relative flex-1 flex items-center justify-center my-1 min-h-0">
-        {displayUrl && (
-          <img
-            src={displayUrl}
-            alt={item.name}
-            referrerPolicy="no-referrer"
-            draggable={false}
-            className="max-h-[76px] w-auto object-contain drop-shadow-[0_6px_12px_rgba(0,0,0,0.75)] transition-transform duration-200 group-hover:scale-105"
-          />
-        )}
-      </div>
-
-      {/* Bottom Name, Rarity & Collection */}
-      <div className="relative z-10 text-center">
-        <div className="text-[11px] font-bold text-white truncate">{item.name}</div>
-        <div className="text-[9px] text-slate-400 truncate">{RARITY_LABELS[item.rarity]}</div>
-        <div className={`text-[9px] font-medium truncate ${getCollectionTextClass(collection)}`}>
-          Коллекция: {collection}
-        </div>
-      </div>
-    </button>
-  );
-};
 
 const PreviewCenterCard: React.FC<{ item: ItemCard }> = ({ item }) => {
   const { displayUrl } = useCleanCardImage(resolveAssetUrl(item.imageUrl));
@@ -549,6 +460,22 @@ export const UpgradeArena: React.FC<UpgradeArenaProps> = ({
   const displayMode = frozenSpin ? frozenSpin.mode : rollMode;
 
   const availableCollections = useMemo(() => getAvailableCollections(items), [items]);
+  const maxCatalogPrice = useMemo(() => {
+    const maxVal = items.reduce((max, it) => Math.max(max, it.price), 0);
+    return Math.max(1000, Math.ceil(maxVal / 500) * 500);
+  }, [items]);
+
+  const sliderMinPrice = useMemo(() => {
+    const parsed = priceFrom === '' ? 0 : Number(priceFrom);
+    if (Number.isNaN(parsed)) return 0;
+    return Math.max(0, Math.min(maxCatalogPrice, parsed));
+  }, [priceFrom, maxCatalogPrice]);
+
+  const sliderMaxPrice = useMemo(() => {
+    const parsed = priceTo === '' ? maxCatalogPrice : Number(priceTo);
+    if (Number.isNaN(parsed)) return maxCatalogPrice;
+    return Math.max(sliderMinPrice, Math.min(maxCatalogPrice, parsed));
+  }, [priceTo, maxCatalogPrice, sliderMinPrice]);
 
   const filteredCatalog = useMemo(() => {
     const q = catSearch.trim().toLowerCase();
@@ -1176,12 +1103,13 @@ export const UpgradeArena: React.FC<UpgradeArenaProps> = ({
               </button>
             </div>
           ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 max-h-[540px] overflow-y-auto pr-1">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 max-h-[540px] overflow-y-auto py-2 px-1">
               {ownedEntries.map(({ inv, item }) => (
                 <div key={inv.instanceId} className="flex justify-center">
                   <CardFrame
                     item={item}
                     size="sm"
+                    rarityGlow
                     selected={selectedInstanceIds.includes(inv.instanceId)}
                     onClick={() => toggleInventoryItem(inv.instanceId)}
                   />
@@ -1191,11 +1119,11 @@ export const UpgradeArena: React.FC<UpgradeArenaProps> = ({
           )}
         </section>
 
-        {/* Bottom-Right: Upgrade Target Catalog (No rarity tabs, compact header inputs & compact colored cards) */}
+        {/* Bottom-Right: Upgrade Target Catalog (No rarity tabs, compact header inputs & rarity-glowing cards) */}
         <section className="lg:col-span-6 bg-[#14161A] border border-white/[0.06] rounded-xl p-5 flex flex-col justify-between">
           <div>
             {/* Single-Line Toolbar matching Reference 1 */}
-            <div className="flex flex-wrap items-center justify-between gap-2.5 mb-4">
+            <div className="flex flex-wrap items-center justify-between gap-2.5 mb-3">
               <div className="flex items-center gap-2">
                 <svg viewBox="0 0 24 24" className="w-4 h-4 text-[#FACC15]" fill="currentColor" aria-hidden="true">
                   <path d="M12 5L5 12L7.2 14.2L12 9.4L16.8 14.2L19 12L12 5Z" />
@@ -1229,23 +1157,86 @@ export const UpgradeArena: React.FC<UpgradeArenaProps> = ({
                 >
                   <ArrowUpDown className="w-3.5 h-3.5" />
                 </button>
-                <input
-                  type="number"
-                  value={priceFrom}
-                  onChange={(e) => setPriceFrom(e.target.value)}
-                  placeholder="от TC"
-                  aria-label="Цена от"
-                  className="w-20 px-2.5 py-1.5 rounded-lg bg-[#0D0F12] border border-white/[0.08] text-xs font-mono-num text-white focus:outline-none focus:border-[#FACC15]"
-                />
-                <input
-                  type="number"
-                  value={priceTo}
-                  onChange={(e) => setPriceTo(e.target.value)}
-                  placeholder="до TC"
-                  aria-label="Цена до"
-                  className="w-20 px-2.5 py-1.5 rounded-lg bg-[#0D0F12] border border-white/[0.08] text-xs font-mono-num text-white focus:outline-none focus:border-[#FACC15]"
-                />
-                <div className="relative w-36 sm:w-44">
+
+                {/* Styled dark "от TC" input with custom dark micro-steppers */}
+                <div className="flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-lg bg-[#0D0F12] border border-white/[0.08] focus-within:border-[#FACC15]/70 transition-colors">
+                  <span className="text-[11px] text-slate-500 select-none">от</span>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    value={priceFrom}
+                    onChange={(e) => setPriceFrom(e.target.value.replace(/[^\d]/g, ''))}
+                    placeholder="0"
+                    aria-label="Цена от"
+                    className="w-12 bg-transparent text-xs font-mono-num text-white placeholder:text-slate-600 focus:outline-none"
+                  />
+                  <span className="text-[10px] font-mono-num text-slate-500 select-none pr-0.5">TC</span>
+                  <div className="flex flex-col border-l border-white/[0.06] pl-1">
+                    <button
+                      type="button"
+                      aria-label="Увеличить минимальную цену"
+                      onClick={() => {
+                        const next = Math.min(sliderMaxPrice, sliderMinPrice + 100);
+                        setPriceFrom(next <= 0 ? '' : String(next));
+                      }}
+                      className="text-slate-500 hover:text-[#FACC15] leading-none cursor-pointer transition-colors"
+                    >
+                      <ChevronUp className="w-3 h-3" />
+                    </button>
+                    <button
+                      type="button"
+                      aria-label="Уменьшить минимальную цену"
+                      onClick={() => {
+                        const next = Math.max(0, sliderMinPrice - 100);
+                        setPriceFrom(next <= 0 ? '' : String(next));
+                      }}
+                      className="text-slate-500 hover:text-[#FACC15] leading-none cursor-pointer transition-colors"
+                    >
+                      <ChevronDown className="w-3 h-3" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Styled dark "до TC" input with custom dark micro-steppers */}
+                <div className="flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-lg bg-[#0D0F12] border border-white/[0.08] focus-within:border-[#FACC15]/70 transition-colors">
+                  <span className="text-[11px] text-slate-500 select-none">до</span>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    value={priceTo}
+                    onChange={(e) => setPriceTo(e.target.value.replace(/[^\d]/g, ''))}
+                    placeholder={String(maxCatalogPrice)}
+                    aria-label="Цена до"
+                    className="w-12 bg-transparent text-xs font-mono-num text-white placeholder:text-slate-600 focus:outline-none"
+                  />
+                  <span className="text-[10px] font-mono-num text-slate-500 select-none pr-0.5">TC</span>
+                  <div className="flex flex-col border-l border-white/[0.06] pl-1">
+                    <button
+                      type="button"
+                      aria-label="Увеличить максимальную цену"
+                      onClick={() => {
+                        const next = Math.min(maxCatalogPrice, sliderMaxPrice + 100);
+                        setPriceTo(next >= maxCatalogPrice ? '' : String(next));
+                      }}
+                      className="text-slate-500 hover:text-[#FACC15] leading-none cursor-pointer transition-colors"
+                    >
+                      <ChevronUp className="w-3 h-3" />
+                    </button>
+                    <button
+                      type="button"
+                      aria-label="Уменьшить максимальную цену"
+                      onClick={() => {
+                        const next = Math.max(sliderMinPrice, sliderMaxPrice - 100);
+                        setPriceTo(next >= maxCatalogPrice ? '' : String(next));
+                      }}
+                      className="text-slate-500 hover:text-[#FACC15] leading-none cursor-pointer transition-colors"
+                    >
+                      <ChevronDown className="w-3 h-3" />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="relative w-32 sm:w-36">
                   <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                   <input
                     type="text"
@@ -1259,30 +1250,88 @@ export const UpgradeArena: React.FC<UpgradeArenaProps> = ({
               </div>
             </div>
 
+            {/* Compact Dual-Range Price Slider synced with от/до TC */}
+            <div className="mb-3.5 px-3 py-2 rounded-lg bg-[#0D0F12] border border-white/[0.05] flex items-center gap-3">
+              <span className="text-[11px] font-mono-num text-slate-400 whitespace-nowrap">
+                {formatTC(sliderMinPrice)} — {formatTC(sliderMaxPrice)} <span className="text-[#FACC15]">TC</span>
+              </span>
+              <div className="relative flex-1 h-5 flex items-center">
+                <div className="w-full h-1.5 rounded-full bg-[#1C2029]" />
+                <div
+                  className="absolute h-1.5 rounded-full bg-gradient-to-r from-[#FACC15] to-[#F59E0B]"
+                  style={{
+                    left: `${(sliderMinPrice / maxCatalogPrice) * 100}%`,
+                    width: `${Math.max(0, ((sliderMaxPrice - sliderMinPrice) / maxCatalogPrice) * 100)}%`,
+                  }}
+                />
+                <input
+                  type="range"
+                  min={0}
+                  max={maxCatalogPrice}
+                  step={50}
+                  value={sliderMinPrice}
+                  aria-label="Минимальная цена ползунок"
+                  onChange={(e) => {
+                    const v = Math.min(Number(e.target.value), sliderMaxPrice);
+                    setPriceFrom(v <= 0 ? '' : String(v));
+                  }}
+                  className="farm-range-dual absolute inset-0 w-full h-full"
+                />
+                <input
+                  type="range"
+                  min={0}
+                  max={maxCatalogPrice}
+                  step={50}
+                  value={sliderMaxPrice}
+                  aria-label="Максимальная цена ползунок"
+                  onChange={(e) => {
+                    const v = Math.max(Number(e.target.value), sliderMinPrice);
+                    setPriceTo(v >= maxCatalogPrice ? '' : String(v));
+                  }}
+                  className="farm-range-dual absolute inset-0 w-full h-full"
+                />
+              </div>
+              {(priceFrom !== '' || priceTo !== '') && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPriceFrom('');
+                    setPriceTo('');
+                  }}
+                  className="text-[11px] text-slate-400 hover:text-[#FACC15] cursor-pointer transition-colors whitespace-nowrap"
+                >
+                  Сбросить
+                </button>
+              )}
+            </div>
+
             {pagedCatalog.length === 0 ? (
               <div className="py-12 text-center text-xs text-slate-500 border border-dashed border-white/[0.08] rounded-xl">
                 Подходящие карточки не найдены
               </div>
             ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 max-h-[540px] overflow-y-auto py-2 px-1">
                 {pagedCatalog.map((item) => {
                   const isSelected = targetItemId === item.id;
                   const disabledByPrice =
                     isAuthorized && itemsStakeValue > 0 && item.price <= itemsStakeValue;
                   return (
-                    <CompactCatalogTile
-                      key={item.id}
-                      item={item}
-                      selected={isSelected}
-                      disabledByPrice={disabledByPrice}
-                      onSelect={() => {
-                        if (isSpinning) return;
-                        setTargetItemId(item.id);
-                        setLastOutcome(null);
-                        setError('');
-                        resetWheelHome();
-                      }}
-                    />
+                    <div key={item.id} className="flex justify-center">
+                      <CardFrame
+                        item={item}
+                        size="sm"
+                        rarityGlow
+                        selected={isSelected}
+                        className={disabledByPrice ? 'opacity-40' : ''}
+                        onClick={() => {
+                          if (isSpinning) return;
+                          setTargetItemId(item.id);
+                          setLastOutcome(null);
+                          setError('');
+                          resetWheelHome();
+                        }}
+                      />
+                    </div>
                   );
                 })}
               </div>

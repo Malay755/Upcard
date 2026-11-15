@@ -164,7 +164,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
         description: `Авторский кейс (${RARITY_LABELS[caseTier]})`,
         price: finalCasePrice,
         tier: caseTier,
-        imageUrl: '/src/assets/images/case_legend_crate_1794514881507.jpg',
+        imageUrl: `/assets/cases/tier_${caseTier}.png`,
         itemIds: caseItemIds,
         rarityWeights: CASE_WEIGHTS_BY_TIER[caseTier],
       });

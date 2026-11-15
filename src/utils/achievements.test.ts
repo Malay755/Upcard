@@ -7,7 +7,7 @@ const SAMPLE_ITEMS: ItemCard[] = [
   { id: 'c1', name: 'Артемий Даун', rarity: 'rare', collection: 'Даун', price: 360, imageUrl: '/a.png', createdAt: 1 },
   { id: 'c2', name: 'Даун Тимур', rarity: 'epic', collection: 'Даун', price: 1500, imageUrl: '/b.png', createdAt: 1 },
   { id: 'c3', name: 'Майкл Пиздюк', rarity: 'rare', collection: 'Майкл', price: 460, imageUrl: '/c.png', createdAt: 1 },
-  { id: 'c4', name: 'Сумашедший Артемий', rarity: 'legendary', collection: 'Артемий', price: 7800, imageUrl: '/d.png', createdAt: 1 },
+  { id: 'c4', name: 'Сумасшедший Артемий', rarity: 'legendary', collection: 'Артемий', price: 7800, imageUrl: '/d.png', createdAt: 1 },
 ];
 
 function makeBaseUser(): UserProfile {
@@ -55,7 +55,7 @@ test('computeMergedAchievementStats tracks win/lose streaks, low-chance wins, le
     { id: 'h8', userId: 'u1', stakeItemIds: [], stakeBalanceAdded: 100, stakeTotal: 100, targetItemId: 'c2', targetPrice: 1500, winChance: 50, multiplier: 1.9, rollMode: 'under', rollValue: 90, won: false, createdAt: 80 },
   ];
   const txs: Transaction[] = [
-    { id: 't1', userId: 'u1', type: 'case_open', amount: -500, balanceAfter: 500, description: 'Open', meta: 'Выпал: Сумашедший Артемий', createdAt: 90 },
+    { id: 't1', userId: 'u1', type: 'case_open', amount: -500, balanceAfter: 500, description: 'Open', meta: 'Выпал: Сумасшедший Артемий', createdAt: 90 },
     { id: 't2', userId: 'u1', type: 'battle_win', amount: 0, balanceAfter: 500, description: 'Battle', createdAt: 95 },
   ];
 

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
   CheckCircle2,
@@ -16,11 +16,12 @@ import { calculateCaseDropProbabilities, formatTC, RARITY_LABELS } from '../util
 import { soundFX } from '../utils/sound';
 import { CardFrame } from './CardFrame';
 import { ScrollReveal } from './ScrollReveal';
-import { CaseStage3D } from './CaseStage3D';
 import { GoatLogo } from './GoatLogo';
 import { CaseThumbnail3D } from './CaseThumbnail3D';
 import { LegendaryRevealModal } from './LegendaryRevealModal';
 import { TelegramPaperPlaneIcon } from './TelegramLoginModal';
+
+const CaseStage3D = lazy(() => import('./CaseStage3D').then((m) => ({ default: m.CaseStage3D })));
 
 interface CasesViewProps {
   user: UserProfile;
@@ -612,11 +613,22 @@ export const CasesView: React.FC<CasesViewProps> = ({
 
           {!showingRouletteStage ? (
             <div className="relative w-full h-full">
-              <CaseStage3D
-                caseBox={activeCase}
-                isOpeningLid={isOpeningLid}
-                entryKey={stageEntryKey}
-              />
+              <Suspense
+                fallback={
+                  <div className="w-full h-full flex items-center justify-center">
+                    <CaseThumbnail3D
+                      caseBox={activeCase}
+                      className="w-64 h-48 object-contain drop-shadow-[0_18px_30px_rgba(0,0,0,0.75)]"
+                    />
+                  </div>
+                }
+              >
+                <CaseStage3D
+                  caseBox={activeCase}
+                  isOpeningLid={isOpeningLid}
+                  entryKey={stageEntryKey}
+                />
+              </Suspense>
             </div>
           ) : (
             <div className="w-full max-w-5xl mx-auto animate-banner-in">

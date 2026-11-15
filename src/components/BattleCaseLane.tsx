@@ -1,9 +1,11 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
 import type { CaseBox, ItemCard } from '../types';
 import { formatTC } from '../utils/economics';
 import { soundFX } from '../utils/sound';
 import { CardFrame } from './CardFrame';
-import { CaseStage3D } from './CaseStage3D';
+import { CaseThumbnail3D } from './CaseThumbnail3D';
+
+const CaseStage3D = lazy(() => import('./CaseStage3D').then((m) => ({ default: m.CaseStage3D })));
 
 const SLOT_WIDTH = 144;
 const LID_MS = 1500;
@@ -94,7 +96,15 @@ export const BattleCaseLane: React.FC<Props> = ({ playerName, caseBox, pool, dro
     <div className="flex items-center justify-between gap-2 border-b border-white/[0.06] px-3 py-2"><span className="truncate text-sm font-bold text-white">{playerName}</span><span className="shrink-0 text-[11px] text-slate-400">Раунд {roundIndex + 1}</span></div>
     <div className="relative h-[310px] overflow-hidden sm:h-[350px]">
       <div className={`absolute inset-0 transition-opacity duration-300 ${isReeling || complete ? 'opacity-0' : 'opacity-100'}`}>
-        <CaseStage3D caseBox={caseBox} isOpeningLid={isLidOpening} entryKey={0}/>
+        <Suspense
+          fallback={
+            <div className="flex h-full w-full items-center justify-center">
+              <CaseThumbnail3D caseBox={caseBox} className="h-44 w-56 object-contain" />
+            </div>
+          }
+        >
+          <CaseStage3D caseBox={caseBox} isOpeningLid={isLidOpening} entryKey={0}/>
+        </Suspense>
       </div>
       <div className={`absolute inset-x-0 top-1/2 -translate-y-1/2 transition-opacity duration-300 ${isReeling || complete ? 'opacity-100' : 'opacity-0'}`}>
         <div ref={tapeRef} className="relative mx-auto flex h-52 w-full items-center overflow-hidden border-y border-white/[0.08] bg-black/45 shadow-[0_16px_40px_rgba(0,0,0,0.55)]">

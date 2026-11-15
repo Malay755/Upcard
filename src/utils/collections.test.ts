@@ -15,7 +15,7 @@ test('inferCardCollection assigns thematic "Даун" collection before member n
 test('inferCardCollection resolves all member-based and squad collections accurately', () => {
   assert.equal(inferCardCollection('Хастлер Артемий'), 'Артемий');
   assert.equal(inferCardCollection('Бухой Артемий'), 'Артемий');
-  assert.equal(inferCardCollection('Сумашедший Артемий'), 'Артемий');
+  assert.equal(inferCardCollection('Сумасшедший Артемий'), 'Артемий');
 
   assert.equal(inferCardCollection('Горбатый Тимур'), 'Тимур');
   assert.equal(inferCardCollection('Фотограф Тимур'), 'Тимур');
@@ -30,6 +30,7 @@ test('inferCardCollection resolves all member-based and squad collections accura
 
   assert.equal(inferCardCollection('Кири-тян'), 'Кирилл');
   assert.equal(inferCardCollection('Кирилл Легенда'), 'Кирилл');
+  assert.equal(inferCardCollection('Ниндзя Скрытого ПТУ'), 'Кирилл');
 
   assert.equal(inferCardCollection('4Б'), 'Сквад');
   assert.equal(inferCardCollection('Ебланы'), 'Сквад');

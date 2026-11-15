@@ -361,3 +361,112 @@
 ::-webkit-scrollbar-thumb:hover {
   background: #3a3f4b;
 }
+
+/* Hide white native number input spinners across dark UI */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+/* Tactical amber range slider */
+.farm-range {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+.farm-range::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 9999px;
+}
+
+.farm-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  margin-top: -6px;
+  border-radius: 9999px;
+  background: radial-gradient(circle at 35% 35%, #fef08a, #facc15 60%, #d97706 100%);
+  border: 2px solid #0b0d10;
+  box-shadow: 0 0 12px rgba(250, 204, 21, 0.55), 0 2px 6px rgba(0, 0, 0, 0.7);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.farm-range::-webkit-slider-thumb:hover {
+  transform: scale(1.12);
+  box-shadow: 0 0 16px rgba(250, 204, 21, 0.8), 0 2px 8px rgba(0, 0, 0, 0.8);
+}
+
+.farm-range::-moz-range-track {
+  height: 6px;
+  border-radius: 9999px;
+  background: transparent;
+}
+
+.farm-range::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 9999px;
+  background: radial-gradient(circle at 35% 35%, #fef08a, #facc15 60%, #d97706 100%);
+  border: 2px solid #0b0d10;
+  box-shadow: 0 0 12px rgba(250, 204, 21, 0.55), 0 2px 6px rgba(0, 0, 0, 0.7);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+/* Dual-thumb range slider overlay */
+.farm-range-dual {
+  pointer-events: none;
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+}
+
+.farm-range-dual::-webkit-slider-runnable-track {
+  height: 6px;
+  background: transparent;
+}
+
+.farm-range-dual::-webkit-slider-thumb {
+  pointer-events: auto;
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  margin-top: -5px;
+  border-radius: 9999px;
+  background: radial-gradient(circle at 35% 35%, #fef08a, #facc15 60%, #d97706 100%);
+  border: 2px solid #0b0d10;
+  box-shadow: 0 0 10px rgba(250, 204, 21, 0.5), 0 2px 5px rgba(0, 0, 0, 0.7);
+  cursor: grab;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.farm-range-dual::-webkit-slider-thumb:hover {
+  transform: scale(1.15);
+  box-shadow: 0 0 14px rgba(250, 204, 21, 0.8), 0 2px 6px rgba(0, 0, 0, 0.8);
+}
+
+.farm-range-dual::-moz-range-track {
+  height: 6px;
+  background: transparent;
+}
+
+.farm-range-dual::-moz-range-thumb {
+  pointer-events: auto;
+  width: 16px;
+  height: 16px;
+  border-radius: 9999px;
+  background: radial-gradient(circle at 35% 35%, #fef08a, #facc15 60%, #d97706 100%);
+  border: 2px solid #0b0d10;
+  box-shadow: 0 0 10px rgba(250, 204, 21, 0.5), 0 2px 5px rgba(0, 0, 0, 0.7);
+  cursor: grab;
+}
+

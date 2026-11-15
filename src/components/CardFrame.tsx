@@ -43,6 +43,7 @@ interface CardFrameProps {
   size?: 'xs' | 'sm' | 'md' | 'lg';
   selected?: boolean;
   showPrice?: boolean;
+  rarityGlow?: boolean;
   onClick?: () => void;
   className?: string;
 }
@@ -52,6 +53,7 @@ export const CardFrame: React.FC<CardFrameProps> = ({
   size = 'md',
   selected = false,
   showPrice = true,
+  rarityGlow = false,
   onClick,
   className = '',
 }) => {
@@ -85,9 +87,25 @@ export const CardFrame: React.FC<CardFrameProps> = ({
         style={{
           filter: selected
             ? `drop-shadow(0 0 18px ${accent.glow}) drop-shadow(0 0 4px ${accent.ringColor})`
+            : rarityGlow
+            ? `drop-shadow(0 0 14px ${accent.glow}) drop-shadow(0 8px 14px rgba(0,0,0,0.65))`
             : 'drop-shadow(0 10px 18px rgba(0,0,0,0.68))',
         }}
       >
+        {rarityGlow && (
+          <div
+            aria-hidden="true"
+            className={`pointer-events-none absolute inset-1.5 rounded-full blur-xl transition-all duration-300 ${
+              selected
+                ? 'opacity-100 scale-110'
+                : 'opacity-70 group-hover:opacity-95 group-hover:scale-105'
+            }`}
+            style={{
+              background: `radial-gradient(circle, ${accent.glow} 0%, transparent 72%)`,
+            }}
+          />
+        )}
+
         {displayUrl ? (
           <img
             src={displayUrl}
@@ -96,7 +114,7 @@ export const CardFrame: React.FC<CardFrameProps> = ({
             decoding="async"
             referrerPolicy="no-referrer"
             draggable={false}
-            className={`w-full h-full object-contain transition-[opacity,transform] duration-500 ease-out group-hover:scale-[1.03] ${
+            className={`relative z-10 w-full h-full object-contain transition-[opacity,transform] duration-500 ease-out group-hover:scale-[1.03] ${
               ready ? 'opacity-100' : 'opacity-0'
             }`}
           />

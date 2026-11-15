@@ -45,7 +45,7 @@ export function inferCardCollection(name: string): string {
   if (/(?:^|[\s«"(—-])ван(?:я|и|е|ю|ей)(?:$|[\s»")—.,!?-])/i.test(normalized)) {
     return 'Ваня';
   }
-  if (/кирилл|кири[-\s]?тян|кири/i.test(normalized)) {
+  if (/кирилл|кири[-\s]?тян|кири|ниндз.*пту|скрытого\s+пту/i.test(normalized)) {
     return 'Кирилл';
   }
   return 'Сквад';
