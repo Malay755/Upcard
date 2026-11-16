@@ -1,11 +1,11 @@
 import React, { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
-import type { AchievementId, AppTab, BootstrapPayload, FriendProfile, LiveDropEntry, Rarity, RollMode } from './types';
+import type { AchievementId, AppTab, BootstrapPayload, FriendProfile, LiveDropEntry, MinesBoardState, Rarity, RollMode } from './types';
 import { ACHIEVEMENT_DEFINITIONS, type AchievementProgress } from './utils/achievements';
 import type { CollectionSetReward } from './utils/collectionSets';
 import { soundFX } from './utils/sound';
 import { Header } from './components/Header';
 import { TopDropsSidebar } from './components/TopDropsSidebar';
-import { DepositModal } from './components/DepositModal';
+import { EarnGamesModal } from './components/EarnGamesModal';
 import { LoadingOverlay } from './components/LoadingOverlay';
 import type { ContractCraftResult } from './components/ContractWorkbench';
 import {
@@ -41,7 +41,7 @@ export default function App() {
   const [payload, setPayload] = useState<BootstrapPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
-  const [depositOpen, setDepositOpen] = useState(false);
+  const [earnGamesOpen, setEarnGamesOpen] = useState(false);
   const [telegramLoginOpen, setTelegramLoginOpen] = useState(false);
   const [isAuthorized, setIsAuthorized] = useState<boolean>(false);
   const [muted, setMuted] = useState(false);
@@ -59,9 +59,13 @@ export default function App() {
 
   const navigateToTab = useCallback((tab: AppTab) => {
     if (tab === activeTabRef.current) return;
-    window.history.pushState({ farmTab: tab }, '', `${window.location.pathname}${window.location.search}`);
     activeTabRef.current = tab;
     setActiveTab(tab);
+    try {
+      window.history.pushState({ farmTab: tab }, '', `${window.location.pathname}${window.location.search}`);
+    } catch {
+      // Some embedded mobile WebViews restrict pushState mutations.
+    }
   }, []);
 
   useEffect(() => () => {
@@ -71,7 +75,11 @@ export default function App() {
   useEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
 
   useEffect(() => {
-    window.history.replaceState({ ...window.history.state, farmTab: activeTab }, '');
+    try {
+      window.history.replaceState({ ...window.history.state, farmTab: activeTab }, '');
+    } catch {
+      // Ignore history restrictions in embedded browsers.
+    }
     const popTab = (event: PopStateEvent) => {
       const tab = (event.state?.farmTab as AppTab | undefined) ?? 'upgrade';
       activeTabRef.current = tab;
@@ -262,20 +270,88 @@ export default function App() {
     await loadBootstrap();
   };
 
-  const handleCredit = async (amount: number) => {
-    if (!payload) throw new Error('Пользователь не загружен.');
-    const res = await apiJson<{ payload: BootstrapPayload; credited: number }>('/api/finance/deposit', {
-      method: 'POST',
-      body: JSON.stringify({ amount }),
-    });
-    setPayload(res.payload);
-    soundFX.playCoin();
-    return res.credited;
+  const openEarnGames = () => {
+    setEarnGamesOpen(true);
   };
 
-  const openDeposit = () => {
-    if (!isAuthorized) { setTelegramLoginOpen(true); return; }
-    setDepositOpen(true);
+  const handleStartHarvest = async () => {
+    const res = await apiJson<{ sessionId: string; durationMs: number; payload: BootstrapPayload }>(
+      '/api/minigames/harvest/start',
+      { method: 'POST', body: JSON.stringify({}) }
+    );
+    setPayload(res.payload);
+    return { sessionId: res.sessionId, durationMs: res.durationMs };
+  };
+
+  const handleFinishHarvest = async (sessionId: string, score: number, hits: number) => {
+    const res = await apiJson<{ reward: number; bestScore: number; payload: BootstrapPayload }>(
+      '/api/minigames/harvest/finish',
+      { method: 'POST', body: JSON.stringify({ sessionId, score, hits }) }
+    );
+    setPayload(res.payload);
+    if (res.reward > 0) soundFX.playCoin();
+    return { reward: res.reward, bestScore: res.bestScore };
+  };
+
+  const handleStartMines = async () => {
+    const res = await apiJson<{ board: MinesBoardState; payload: BootstrapPayload }>(
+      '/api/minigames/mines/start',
+      { method: 'POST', body: JSON.stringify({}) }
+    );
+    setPayload(res.payload);
+    return res.board;
+  };
+
+  const handleStepMines = async (sessionId: string, cellIndex: number) => {
+    const res = await apiJson<{
+      board: MinesBoardState;
+      stepBonus?: number;
+      reward: number;
+      payload: BootstrapPayload;
+    }>('/api/minigames/mines/step', {
+      method: 'POST',
+      body: JSON.stringify({ sessionId, cellIndex }),
+    });
+    setPayload(res.payload);
+    if (res.reward > 0) soundFX.playCoin();
+    return { board: res.board, stepBonus: res.stepBonus, reward: res.reward };
+  };
+
+  const handleCashoutMines = async (sessionId: string) => {
+    const res = await apiJson<{ board: MinesBoardState; reward: number; payload: BootstrapPayload }>(
+      '/api/minigames/mines/cashout',
+      { method: 'POST', body: JSON.stringify({ sessionId }) }
+    );
+    setPayload(res.payload);
+    if (res.reward > 0) soundFX.playCoin();
+    return { board: res.board, reward: res.reward };
+  };
+
+  const handleStartRace = async () => {
+    const res = await apiJson<{ sessionId: string; durationMs: number; payload: BootstrapPayload }>(
+      '/api/minigames/race/start',
+      { method: 'POST', body: JSON.stringify({}) }
+    );
+    setPayload(res.payload);
+    return { sessionId: res.sessionId, durationMs: res.durationMs };
+  };
+
+  const handleFinishRace = async (
+    sessionId: string,
+    coinsCollected: number,
+    distanceMeters: number,
+    survived: boolean
+  ) => {
+    const res = await apiJson<{ reward: number; bestScore: number; payload: BootstrapPayload }>(
+      '/api/minigames/race/finish',
+      {
+        method: 'POST',
+        body: JSON.stringify({ sessionId, coinsCollected, distanceMeters, survived }),
+      }
+    );
+    setPayload(res.payload);
+    if (res.reward > 0) soundFX.playCoin();
+    return { reward: res.reward, bestScore: res.bestScore };
   };
 
   const enableNotifications = () => {
@@ -522,14 +598,14 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen flex flex-col text-slate-100">
+    <div className="min-h-screen flex flex-col text-slate-100 overflow-x-clip">
         <Header
         activeTab={activeTab}
         onTabChange={navigateToTab}
         user={payload.user}
         isAuthorized={isAuthorized}
         onOpenTelegramLogin={() => setTelegramLoginOpen(true)}
-        onOpenDeposit={openDeposit}
+        onOpenEarn={openEarnGames}
         onLogout={handleLogout}
         muted={muted}
         onToggleMute={handleToggleMute}
@@ -538,7 +614,7 @@ export default function App() {
       <div className="flex min-h-0 flex-1">
       <TopDropsSidebar liveDrops={liveDrops} items={payload.items} />
       <main className="flex-1 min-w-0 max-w-[1320px] w-full mx-auto px-4 sm:px-6 py-5">
-        <Suspense fallback={<LoadingOverlay label="Загружаем раздел" />}>
+        <Suspense fallback={<LoadingOverlay label="Загружаем раздел" compact />}>
         <div key={activeTab} className="animate-tab-enter">
           {activeTab === 'upgrade' && (
             <UpgradeArena
@@ -572,7 +648,7 @@ export default function App() {
               onOpenTelegramLogin={() => setTelegramLoginOpen(true)}
               onOpenCase={handleOpenCase}
               onSellItems={handleSellItems}
-              onOpenDeposit={openDeposit}
+              onOpenEarn={openEarnGames}
             />
           )}
 
@@ -635,10 +711,20 @@ export default function App() {
         </div>
       </footer>
 
-      <DepositModal
-        isOpen={depositOpen}
-        onClose={() => setDepositOpen(false)}
-        onCredit={handleCredit}
+      <EarnGamesModal
+        isOpen={earnGamesOpen}
+        onClose={() => setEarnGamesOpen(false)}
+        minigames={payload.minigames}
+        userBalance={payload.user.balance}
+        isAuthorized={isAuthorized}
+        onRequireAuth={() => setTelegramLoginOpen(true)}
+        onStartHarvest={handleStartHarvest}
+        onFinishHarvest={handleFinishHarvest}
+        onStartMines={handleStartMines}
+        onStepMines={handleStepMines}
+        onCashoutMines={handleCashoutMines}
+        onStartRace={handleStartRace}
+        onFinishRace={handleFinishRace}
       />
 
       {realtimeNotice && <div role="status" className="fixed bottom-5 right-5 z-50 flex max-w-sm items-center gap-3 rounded-xl border border-amber-300/20 bg-[#171a20] p-4 shadow-2xl">

@@ -20,6 +20,9 @@ import type {
   InventoryItem,
   ItemCard,
   LiveDropEntry,
+  MinigameId,
+  MinigameStatusMap,
+  MinesBoardState,
   Rarity,
   RollMode,
   Transaction,
@@ -66,12 +69,25 @@ interface DatabaseSchema {
   friendRequests: PersistedFriendRequest[];
   battleInvitations: PersistedBattleInvitation[];
   battles: PersistedBattleRoom[];
+  minigameSessions?: PersistedMinigameSession[];
   sessionSecret?: string;
   revokedTokens?: string[];
   authVersion?: number;
   economyVersion?: number;
   catalogVersion?: number;
   consumedTelegramHashes?: { hash: string; expiresAt: number }[];
+}
+
+interface PersistedMinigameSession {
+  id: string;
+  userId: string;
+  game: MinigameId;
+  status: 'active' | 'completed' | 'busted';
+  startedAt: number;
+  expiresAt: number;
+  mineIndices?: number[];
+  revealedSafe?: number[];
+  currentBank?: number;
 }
 
 interface PersistedFriendRequest { id: string; fromUserId: string; toUserId: string; createdAt: number }
@@ -106,6 +122,90 @@ interface PersistedBattleRoom {
 }
 
 const socketsByUser = new Map<string, Set<WebSocket>>();
+
+const MINIGAME_MAX_CHARGES = 3;
+const MINIGAME_RECHARGE_MS = 180_000; // +1 ticket every 3 minutes
+const MINES_GRID_SIZE = 16;
+const MINES_TRAP_COUNT = 3;
+const MINES_STEP_BONUSES = [30, 35, 40, 50, 60, 75, 95, 115, 130, 140, 150, 160, 180];
+
+function createDefaultMinigameEnergy(now = Date.now()): NonNullable<UserProfile['minigameEnergy']> {
+  return {
+    harvest: { charges: MINIGAME_MAX_CHARGES, lastRechargeAt: now, bestScore: 0, playsCount: 0 },
+    mines: { charges: MINIGAME_MAX_CHARGES, lastRechargeAt: now, bestScore: 0, playsCount: 0 },
+    race: { charges: MINIGAME_MAX_CHARGES, lastRechargeAt: now, bestScore: 0, playsCount: 0 },
+  };
+}
+
+function syncMinigameEnergy(user: UserProfile, now = Date.now()): NonNullable<UserProfile['minigameEnergy']> {
+  if (!user.minigameEnergy) {
+    user.minigameEnergy = createDefaultMinigameEnergy(now);
+  }
+  const games: MinigameId[] = ['harvest', 'mines', 'race'];
+  for (const game of games) {
+    const slot = user.minigameEnergy[game] ?? {
+      charges: MINIGAME_MAX_CHARGES,
+      lastRechargeAt: now,
+      bestScore: 0,
+      playsCount: 0,
+    };
+    slot.charges = Math.max(0, Math.min(MINIGAME_MAX_CHARGES, Math.floor(Number(slot.charges) || 0)));
+    slot.lastRechargeAt = Number.isFinite(slot.lastRechargeAt) && slot.lastRechargeAt > 0 ? slot.lastRechargeAt : now;
+    slot.bestScore = Math.max(0, Math.floor(Number(slot.bestScore) || 0));
+    slot.playsCount = Math.max(0, Math.floor(Number(slot.playsCount) || 0));
+
+    if (slot.charges < MINIGAME_MAX_CHARGES) {
+      const elapsed = Math.max(0, now - slot.lastRechargeAt);
+      const gained = Math.floor(elapsed / MINIGAME_RECHARGE_MS);
+      if (gained > 0) {
+        slot.charges = Math.min(MINIGAME_MAX_CHARGES, slot.charges + gained);
+        slot.lastRechargeAt = slot.charges >= MINIGAME_MAX_CHARGES
+          ? now
+          : slot.lastRechargeAt + gained * MINIGAME_RECHARGE_MS;
+      }
+    } else {
+      slot.lastRechargeAt = now;
+    }
+    user.minigameEnergy[game] = slot;
+  }
+  return user.minigameEnergy;
+}
+
+function getMinigameStatusMap(user?: UserProfile, now = Date.now()): MinigameStatusMap {
+  const games: MinigameId[] = ['harvest', 'mines', 'race'];
+  const energy = user ? syncMinigameEnergy(user, now) : createDefaultMinigameEnergy(now);
+  const result = {} as MinigameStatusMap;
+  for (const game of games) {
+    const slot = energy[game];
+    result[game] = {
+      charges: slot.charges,
+      maxCharges: MINIGAME_MAX_CHARGES,
+      nextRechargeAt: slot.charges < MINIGAME_MAX_CHARGES ? slot.lastRechargeAt + MINIGAME_RECHARGE_MS : null,
+      bestScore: slot.bestScore,
+      playsCount: slot.playsCount,
+    };
+  }
+  return result;
+}
+
+function publicMinesBoard(session: PersistedMinigameSession): MinesBoardState {
+  const revealedSafe = session.revealedSafe ?? [];
+  const nextIdx = Math.min(revealedSafe.length, MINES_STEP_BONUSES.length - 1);
+  return {
+    sessionId: session.id,
+    gridSize: MINES_GRID_SIZE,
+    minesCount: MINES_TRAP_COUNT,
+    revealedSafe,
+    mineLocations: session.status === 'active' ? undefined : (session.mineIndices ?? []),
+    currentBank: session.currentBank ?? 0,
+    nextStepBonus: MINES_STEP_BONUSES[nextIdx],
+    status: session.status === 'active'
+      ? 'playing'
+      : session.status === 'busted'
+      ? 'busted'
+      : 'cashed_out',
+  };
+}
 
 function uid(prefix: string): string {
   return `${prefix}_${crypto.randomBytes(5).toString('hex')}`;
@@ -246,7 +346,7 @@ function createInitialDb(): DatabaseSchema {
       name: 'Артемий Даун',
       rarity: 'rare',
       collection: 'Даун',
-      price: 360,
+      price: 230,
       imageUrl: '/assets/cards/artemiy_daun.png',
       createdAt: now - 86400000 * 6,
     },
@@ -255,7 +355,7 @@ function createInitialDb(): DatabaseSchema {
       name: 'Майкл Пиздюк',
       rarity: 'rare',
       collection: 'Майкл',
-      price: 460,
+      price: 320,
       imageUrl: '/assets/cards/michael_pizdyuk.png',
       createdAt: now - 86400000 * 5.5,
     },
@@ -264,7 +364,7 @@ function createInitialDb(): DatabaseSchema {
       name: 'Хастлер Артемий',
       rarity: 'rare',
       collection: 'Артемий',
-      price: 580,
+      price: 410,
       imageUrl: '/assets/cards/hustler_artemiy.png',
       createdAt: now - 86400000 * 5,
     },
@@ -273,7 +373,7 @@ function createInitialDb(): DatabaseSchema {
       name: 'Шпион Майкл',
       rarity: 'super_rare',
       collection: 'Майкл',
-      price: 980,
+      price: 840,
       imageUrl: '/assets/cards/spy_michael.png',
       createdAt: now - 86400000 * 4.5,
     },
@@ -282,7 +382,7 @@ function createInitialDb(): DatabaseSchema {
       name: 'Даун Тимур',
       rarity: 'epic',
       collection: 'Даун',
-      price: 1500,
+      price: 1600,
       imageUrl: '/assets/cards/down_timur.png',
       createdAt: now - 86400000 * 4,
     },
@@ -291,7 +391,7 @@ function createInitialDb(): DatabaseSchema {
       name: 'Бухой Артемий',
       rarity: 'epic',
       collection: 'Артемий',
-      price: 1680,
+      price: 1800,
       imageUrl: '/assets/cards/drunk_artemiy.png',
       createdAt: now - 86400000 * 3.5,
     },
@@ -300,7 +400,7 @@ function createInitialDb(): DatabaseSchema {
       name: 'Кири-тян',
       rarity: 'epic',
       collection: 'Кирилл',
-      price: 1850,
+      price: 2000,
       imageUrl: '/assets/cards/kiri_chan.png',
       createdAt: now - 86400000 * 3,
     },
@@ -309,7 +409,7 @@ function createInitialDb(): DatabaseSchema {
       name: '4Б',
       rarity: 'epic',
       collection: 'Сквад',
-      price: 1950,
+      price: 2200,
       imageUrl: '/assets/cards/class_4b.png',
       createdAt: now - 86400000 * 2.75,
     },
@@ -318,7 +418,7 @@ function createInitialDb(): DatabaseSchema {
       name: 'Горбатый Тимур',
       rarity: 'epic',
       collection: 'Тимур',
-      price: 2150,
+      price: 2400,
       imageUrl: '/assets/cards/hunchback_timur.png',
       createdAt: now - 86400000 * 2.5,
     },
@@ -327,7 +427,7 @@ function createInitialDb(): DatabaseSchema {
       name: 'Усатый Ваня',
       rarity: 'epic',
       collection: 'Ваня',
-      price: 2400,
+      price: 2850,
       imageUrl: '/assets/cards/usaty_vanya.png',
       createdAt: now - 86400000 * 2,
     },
@@ -336,7 +436,7 @@ function createInitialDb(): DatabaseSchema {
       name: 'Ебланы',
       rarity: 'epic',
       collection: 'Сквад',
-      price: 2650,
+      price: 3100,
       imageUrl: '/assets/cards/eblany.png',
       createdAt: now - 86400000 * 1.5,
     },
@@ -345,7 +445,7 @@ function createInitialDb(): DatabaseSchema {
       name: 'Жопа Майкла',
       rarity: 'epic',
       collection: 'Майкл',
-      price: 2900,
+      price: 3600,
       imageUrl: '/assets/cards/jopa_michaela.png',
       createdAt: now - 86400000 * 1,
     },
@@ -354,7 +454,7 @@ function createInitialDb(): DatabaseSchema {
       name: 'Фотограф Тимур',
       rarity: 'legendary',
       collection: 'Тимур',
-      price: 5400,
+      price: 5500,
       imageUrl: '/assets/cards/photographer_timur.png',
       createdAt: now - 3600000 * 21,
     },
@@ -363,7 +463,7 @@ function createInitialDb(): DatabaseSchema {
       name: 'Тимур на Волге',
       rarity: 'legendary',
       collection: 'Тимур',
-      price: 6200,
+      price: 6400,
       imageUrl: '/assets/cards/timur_volga.png',
       createdAt: now - 3600000 * 18,
     },
@@ -372,7 +472,7 @@ function createInitialDb(): DatabaseSchema {
       name: 'Сумасшедший Артемий',
       rarity: 'legendary',
       collection: 'Артемий',
-      price: 7800,
+      price: 8800,
       imageUrl: '/assets/cards/crazy_artemiy.png',
       createdAt: now - 3600000 * 15,
     },
@@ -381,7 +481,7 @@ function createInitialDb(): DatabaseSchema {
       name: 'Ваня Дрипчик',
       rarity: 'legendary',
       collection: 'Ваня',
-      price: 9500,
+      price: 10500,
       imageUrl: '/assets/cards/vanya_dripchik.png',
       createdAt: now - 3600000 * 12,
     },
@@ -390,7 +490,7 @@ function createInitialDb(): DatabaseSchema {
       name: 'TENET T4',
       rarity: 'legendary',
       collection: 'Сквад',
-      price: 14500,
+      price: 15000,
       imageUrl: '/assets/cards/tenet_t4.png',
       createdAt: now - 3600000 * 6,
     },
@@ -399,7 +499,7 @@ function createInitialDb(): DatabaseSchema {
       name: 'Тимур Деревенщина',
       rarity: 'rare',
       collection: 'Тимур',
-      price: 310,
+      price: 200,
       imageUrl: '/assets/cards/timur_derevenshchina.png',
       createdAt: now - 3600000 * 5.8,
     },
@@ -408,7 +508,7 @@ function createInitialDb(): DatabaseSchema {
       name: 'Толстый Кирилл',
       rarity: 'rare',
       collection: 'Кирилл',
-      price: 390,
+      price: 260,
       imageUrl: '/assets/cards/fat_kirill.png',
       createdAt: now - 3600000 * 5.6,
     },
@@ -417,7 +517,7 @@ function createInitialDb(): DatabaseSchema {
       name: 'Перекус Тимура',
       rarity: 'rare',
       collection: 'Тимур',
-      price: 430,
+      price: 290,
       imageUrl: '/assets/cards/timur_snack.png',
       createdAt: now - 3600000 * 5.4,
     },
@@ -426,7 +526,7 @@ function createInitialDb(): DatabaseSchema {
       name: 'Трусы Кирилла',
       rarity: 'rare',
       collection: 'Кирилл',
-      price: 510,
+      price: 350,
       imageUrl: '/assets/cards/kirill_shorts.png',
       createdAt: now - 3600000 * 5.2,
     },
@@ -435,7 +535,7 @@ function createInitialDb(): DatabaseSchema {
       name: 'Беседа у Костра',
       rarity: 'rare',
       collection: 'Сквад',
-      price: 540,
+      price: 380,
       imageUrl: '/assets/cards/campfire_talk.png',
       createdAt: now - 3600000 * 5.0,
     },
@@ -444,7 +544,7 @@ function createInitialDb(): DatabaseSchema {
       name: 'Ахегао Артемий',
       rarity: 'rare',
       collection: 'Артемий',
-      price: 610,
+      price: 440,
       imageUrl: '/assets/cards/ahegao_artemiy.png',
       createdAt: now - 3600000 * 4.8,
     },
@@ -453,7 +553,7 @@ function createInitialDb(): DatabaseSchema {
       name: 'Шумахеры',
       rarity: 'rare',
       collection: 'Сквад',
-      price: 650,
+      price: 480,
       imageUrl: '/assets/cards/schumachers.png',
       createdAt: now - 3600000 * 4.6,
     },
@@ -462,7 +562,7 @@ function createInitialDb(): DatabaseSchema {
       name: 'Тимур AI',
       rarity: 'super_rare',
       collection: 'Тимур',
-      price: 820,
+      price: 650,
       imageUrl: '/assets/cards/timur_ai.png',
       createdAt: now - 3600000 * 4.4,
     },
@@ -471,7 +571,7 @@ function createInitialDb(): DatabaseSchema {
       name: 'Артемий Дерп',
       rarity: 'super_rare',
       collection: 'Артемий',
-      price: 890,
+      price: 740,
       imageUrl: '/assets/cards/artemiy_derp.png',
       createdAt: now - 3600000 * 4.2,
     },
@@ -480,7 +580,7 @@ function createInitialDb(): DatabaseSchema {
       name: 'Майкл Эмо',
       rarity: 'super_rare',
       collection: 'Майкл',
-      price: 1040,
+      price: 940,
       imageUrl: '/assets/cards/emo_michael.png',
       createdAt: now - 3600000 * 4.0,
     },
@@ -489,7 +589,7 @@ function createInitialDb(): DatabaseSchema {
       name: 'Братан Кирилл',
       rarity: 'super_rare',
       collection: 'Кирилл',
-      price: 1120,
+      price: 1040,
       imageUrl: '/assets/cards/bro_kirill.png',
       createdAt: now - 3600000 * 3.8,
     },
@@ -498,7 +598,7 @@ function createInitialDb(): DatabaseSchema {
       name: 'Фермер Тимур',
       rarity: 'super_rare',
       collection: 'Тимур',
-      price: 1190,
+      price: 1140,
       imageUrl: '/assets/cards/farmer_timur.png',
       createdAt: now - 3600000 * 3.6,
     },
@@ -507,7 +607,7 @@ function createInitialDb(): DatabaseSchema {
       name: 'Ниндзя Скрытого ПТУ',
       rarity: 'super_rare',
       collection: 'Кирилл',
-      price: 1280,
+      price: 1250,
       imageUrl: '/assets/cards/ptu_ninja.png',
       createdAt: now - 3600000 * 3.4,
     },
@@ -516,7 +616,7 @@ function createInitialDb(): DatabaseSchema {
       name: 'Сумасшедший Ваня',
       rarity: 'epic',
       collection: 'Ваня',
-      price: 2250,
+      price: 2650,
       imageUrl: '/assets/cards/crazy_vanya.png',
       createdAt: now - 3600000 * 3.2,
     },
@@ -525,7 +625,7 @@ function createInitialDb(): DatabaseSchema {
       name: 'Московская Авантюра',
       rarity: 'epic',
       collection: 'Сквад',
-      price: 2780,
+      price: 3350,
       imageUrl: '/assets/cards/moscow_adventure.png',
       createdAt: now - 3600000 * 3.0,
     },
@@ -534,7 +634,7 @@ function createInitialDb(): DatabaseSchema {
       name: 'Тимур СВО',
       rarity: 'legendary',
       collection: 'Тимур',
-      price: 6900,
+      price: 7500,
       imageUrl: '/assets/cards/timur_svo.png',
       createdAt: now - 3600000 * 2.8,
     },
@@ -543,7 +643,7 @@ function createInitialDb(): DatabaseSchema {
       name: 'Альфа Тимур',
       rarity: 'legendary',
       collection: 'Тимур',
-      price: 11500,
+      price: 12500,
       imageUrl: '/assets/cards/alpha_timur.png',
       createdAt: now - 3600000 * 2.6,
     },
@@ -553,8 +653,8 @@ function createInitialDb(): DatabaseSchema {
     {
       id: 'case_starter',
       name: 'Зелёный Старт',
-      description: 'Входной кейс с редкими карточками Тимура, Кирилла, Артемия и шансом выбить сверхредкий и эпический дроп.',
-      price: 390,
+      description: 'Входной кейс со всей редкой десяткой сквада и шансом выбить сверхредкую или стартовую эпическую карту.',
+      price: 650,
       tier: 'rare',
       imageUrl: '/assets/cases/case_starter.png',
       itemIds: [
@@ -563,48 +663,29 @@ function createInitialDb(): DatabaseSchema {
         'card_fat_kirill',
         'card_timur_snack',
         'card_michael_pizdyuk',
-        'card_hustler_artemiy',
-        'card_timur_ai',
-        'card_spy_michael',
-        'card_down_timur',
-        'card_kiri_chan',
-      ],
-      rarityWeights: { common: 0, rare: 68, super_rare: 16, epic: 16, legendary: 0 },
-    },
-    {
-      id: 'case_hustle',
-      name: 'Ночной Хастл',
-      description: 'Изумрудный хастл-микс: Шумахеры, Ахегао Артемий, Трусы Кирилла, сверхредкие и эпический драйв.',
-      price: 690,
-      tier: 'rare',
-      imageUrl: '/assets/cases/case_hustle.png',
-      itemIds: [
-        'card_artemiy_daun',
-        'card_michael_pizdyuk',
         'card_kirill_shorts',
         'card_campfire_talk',
         'card_hustler_artemiy',
         'card_ahegao_artemiy',
         'card_schumachers',
+        'card_timur_ai',
         'card_artemiy_derp',
         'card_spy_michael',
-        'card_emo_michael',
         'card_down_timur',
-        'card_drunk_artemiy',
-        'card_kiri_chan',
-        'card_usaty_vanya',
       ],
-      rarityWeights: { common: 0, rare: 48, super_rare: 24, epic: 28, legendary: 0 },
+      rarityWeights: { common: 0, rare: 68, super_rare: 24, epic: 8, legendary: 0 },
     },
     {
       id: 'case_spy_cobalt',
-      name: 'Кобальт Шпион',
-      description: 'Синий сверхредкий кейс: Шпион Майкл, Майкл Эмо, Тимур AI, Братан Кирилл, Фермер Тимур и Ниндзя ПТУ.',
-      price: 940,
+      name: 'Кобальт ПТУ',
+      description: 'Синий кейс со всей семёркой сверхредких карт, редкой основой и четверкой сочных эпиков.',
+      price: 1300,
       tier: 'super_rare',
       imageUrl: '/assets/cases/case_spy_cobalt.png',
       itemIds: [
         'card_michael_pizdyuk',
+        'card_kirill_shorts',
+        'card_campfire_talk',
         'card_hustler_artemiy',
         'card_schumachers',
         'card_timur_ai',
@@ -614,237 +695,99 @@ function createInitialDb(): DatabaseSchema {
         'card_bro_kirill',
         'card_farmer_timur',
         'card_ptu_ninja',
+        'card_down_timur',
+        'card_drunk_artemiy',
+        'card_kiri_chan',
         'card_class_4b',
-        'card_hunchback_timur',
-        'card_crazy_vanya',
-        'card_eblany',
       ],
-      rarityWeights: { common: 0, rare: 20, super_rare: 52, epic: 28, legendary: 0 },
+      rarityWeights: { common: 0, rare: 42, super_rare: 38, epic: 20, legendary: 0 },
     },
     {
       id: 'case_cosmos',
       name: 'Космос Сквад',
-      description: 'Баланс сверхредких и эпических карт сквада с Московской Авантюрой, Ниндзя ПТУ и шансом сорвать легенду.',
-      price: 1450,
+      description: 'Сбалансированный кейс с Московской Авантюрой, топ-эпиками и шансом поймать Фотографа или Тимура на Волге.',
+      price: 2150,
       tier: 'epic',
       imageUrl: '/assets/cases/case_cosmos.png',
       itemIds: [
-        'card_artemiy_daun',
-        'card_campfire_talk',
-        'card_hustler_artemiy',
-        'card_schumachers',
-        'card_spy_michael',
-        'card_ptu_ninja',
-        'card_down_timur',
-        'card_kiri_chan',
-        'card_class_4b',
-        'card_hunchback_timur',
-        'card_crazy_vanya',
-        'card_usaty_vanya',
-        'card_eblany',
-        'card_moscow_adventure',
-        'card_jopa_michaela',
-        'card_photographer_timur',
-        'card_timur_volga',
-        'card_timur_svo',
-      ],
-      rarityWeights: { common: 0, rare: 18, super_rare: 24, epic: 48, legendary: 10 },
-    },
-    {
-      id: 'case_drip_legend',
-      name: 'Дрип Легенд',
-      description: 'Флагманский золотой кейс с повышенным шансом на Тимура СВО, Альфа Тимура, Сумасшедшего Артемия и Ваню Дрипчика.',
-      price: 3200,
-      tier: 'legendary',
-      imageUrl: '/assets/cases/case_drip_legend.png',
-      itemIds: [
-        'card_hustler_artemiy',
-        'card_bro_kirill',
-        'card_farmer_timur',
-        'card_down_timur',
-        'card_class_4b',
-        'card_crazy_vanya',
-        'card_usaty_vanya',
-        'card_eblany',
-        'card_moscow_adventure',
-        'card_jopa_michaela',
-        'card_photographer_timur',
-        'card_timur_volga',
-        'card_timur_svo',
-        'card_crazy_artemiy',
-        'card_vanya_dripchik',
-        'card_alpha_timur',
-      ],
-      rarityWeights: { common: 0, rare: 12, super_rare: 12, epic: 46, legendary: 30 },
-    },
-    {
-      id: 'case_tenet_vip',
-      name: 'TENET Автосалон VIP',
-      description: 'Элитный кейс только с топовыми эпиками и золотыми легендами, включая Тимура СВО, Альфа Тимура и TENET T4.',
-      price: 5400,
-      tier: 'legendary',
-      imageUrl: '/assets/cases/case_tenet_vip.png',
-      itemIds: [
-        'card_kiri_chan',
-        'card_crazy_vanya',
-        'card_usaty_vanya',
-        'card_eblany',
-        'card_moscow_adventure',
-        'card_jopa_michaela',
-        'card_timur_volga',
-        'card_timur_svo',
-        'card_crazy_artemiy',
-        'card_vanya_dripchik',
-        'card_alpha_timur',
-        'card_tenet_t4',
-      ],
-      rarityWeights: { common: 0, rare: 0, super_rare: 0, epic: 52, legendary: 48 },
-    },
-    {
-      id: 'case_custom_artemiy',
-      name: 'Артемий на районе',
-      description: 'Авторский кейс с фокусом на серию Артемия: Ахегао Артемий, Артемий Дерп, Бухой и Сумасшедший Артемий.',
-      price: 450,
-      tier: 'rare',
-      imageUrl: '/assets/cases/case_custom_artemiy.png',
-      itemIds: [
-        'card_artemiy_daun',
-        'card_hustler_artemiy',
-        'card_ahegao_artemiy',
-        'card_artemiy_derp',
-        'card_spy_michael',
-        'card_down_timur',
-        'card_drunk_artemiy',
-        'card_usaty_vanya',
-        'card_crazy_artemiy',
-      ],
-      rarityWeights: { common: 0, rare: 52, super_rare: 20, epic: 23, legendary: 5 },
-    },
-    {
-      id: 'case_custom_timur',
-      name: 'Закат на Волге',
-      description: 'Авторская охота за серией Тимура: Деревенщина, AI, Фермер Тимур, Тимур СВО, Фотограф и Альфа Тимур.',
-      price: 1950,
-      tier: 'epic',
-      imageUrl: '/assets/cases/case_custom_timur.png',
-      itemIds: [
         'card_timur_derevenshchina',
-        'card_timur_snack',
-        'card_hustler_artemiy',
-        'card_timur_ai',
-        'card_farmer_timur',
-        'card_down_timur',
-        'card_hunchback_timur',
-        'card_jopa_michaela',
-        'card_photographer_timur',
-        'card_timur_volga',
-        'card_timur_svo',
-        'card_alpha_timur',
-      ],
-      rarityWeights: { common: 0, rare: 18, super_rare: 22, epic: 36, legendary: 24 },
-    },
-    {
-      id: 'case_custom_purple',
-      name: 'Фиолетовый вайб',
-      description: 'Концентрированный эпик-кейс: 4Б, Бухой Артемий, Сумасшедший Ваня, Московская Авантюра и вся фиолетовая элита.',
-      price: 1750,
-      tier: 'epic',
-      imageUrl: '/assets/cases/case_custom_purple.png',
-      itemIds: [
-        'card_hustler_artemiy',
-        'card_ptu_ninja',
-        'card_down_timur',
-        'card_drunk_artemiy',
-        'card_kiri_chan',
-        'card_class_4b',
-        'card_hunchback_timur',
-        'card_crazy_vanya',
-        'card_usaty_vanya',
-        'card_eblany',
-        'card_moscow_adventure',
-        'card_jopa_michaela',
-      ],
-      rarityWeights: { common: 0, rare: 12, super_rare: 14, epic: 74, legendary: 0 },
-    },
-    {
-      id: 'case_custom_vanya',
-      name: 'Секрет Вани (EZ)',
-      description: 'Ультра-рисковый авторский кейс с повышенным шансом выбить Сумасшедшего Ваню, Ваню Дрипчика и Альфа Тимура.',
-      price: 4200,
-      tier: 'legendary',
-      imageUrl: '/assets/cases/case_custom_vanya.png',
-      itemIds: [
-        'card_kiri_chan',
-        'card_class_4b',
-        'card_crazy_vanya',
-        'card_usaty_vanya',
-        'card_timur_volga',
-        'card_crazy_artemiy',
-        'card_vanya_dripchik',
-        'card_alpha_timur',
-      ],
-      rarityWeights: { common: 0, rare: 0, super_rare: 0, epic: 60, legendary: 40 },
-    },
-    {
-      id: 'case_custom_oligarch',
-      name: 'Золотой Олимп',
-      description: 'Высокие ставки ради топового автопарка TENET T4, Альфа Тимура и всей золотой коллекции легендарных карт.',
-      price: 6800,
-      tier: 'legendary',
-      imageUrl: '/assets/cases/case_custom_oligarch.png',
-      itemIds: [
-        'card_usaty_vanya',
-        'card_moscow_adventure',
-        'card_jopa_michaela',
-        'card_photographer_timur',
-        'card_timur_volga',
-        'card_timur_svo',
-        'card_crazy_artemiy',
-        'card_vanya_dripchik',
-        'card_alpha_timur',
-        'card_tenet_t4',
-      ],
-      rarityWeights: { common: 0, rare: 0, super_rare: 0, epic: 42, legendary: 58 },
-    },
-    {
-      id: 'case_ptu_kobalt',
-      name: 'Скрытое ПТУ',
-      description: 'Тематический кейс новой волны: вся линейка сверхредких карт Кирилла, Майкла Эмо, Ниндзя ПТУ и редкие мемы сквада.',
-      price: 1100,
-      tier: 'super_rare',
-      imageUrl: '/assets/cases/case_ptu_kobalt.png',
-      itemIds: [
+        'card_artemiy_daun',
         'card_fat_kirill',
-        'card_kirill_shorts',
-        'card_campfire_talk',
-        'card_timur_ai',
-        'card_artemiy_derp',
+        'card_timur_snack',
+        'card_ahegao_artemiy',
+        'card_spy_michael',
         'card_emo_michael',
         'card_bro_kirill',
         'card_farmer_timur',
         'card_ptu_ninja',
+        'card_class_4b',
+        'card_hunchback_timur',
         'card_crazy_vanya',
+        'card_usaty_vanya',
+        'card_eblany',
         'card_moscow_adventure',
+        'card_photographer_timur',
+        'card_timur_volga',
       ],
-      rarityWeights: { common: 0, rare: 28, super_rare: 52, epic: 20, legendary: 0 },
+      rarityWeights: { common: 0, rare: 34, super_rare: 30, epic: 26, legendary: 10 },
     },
     {
-      id: 'case_alpha_timur',
-      name: 'Альфа & СВО',
-      description: 'Премиальный микс с новой золотой гвардией: Тимур СВО и Альфа Тимур под прикрытием Фермера, Ниндзя ПТУ и Авантюры.',
-      price: 3600,
+      id: 'case_drip_legend',
+      name: 'Дрип Легенд',
+      description: 'Премиальный золотой кейс с 7 эпическими картами и охотой за Тимуром СВО, Сумасшедшим Артемием и легендами Тимура.',
+      price: 2950,
       tier: 'legendary',
-      imageUrl: '/assets/cases/case_alpha_timur.png',
+      imageUrl: '/assets/cases/case_drip_legend.png',
       itemIds: [
-        'card_timur_snack',
+        'card_hustler_artemiy',
+        'card_ahegao_artemiy',
+        'card_schumachers',
+        'card_emo_michael',
+        'card_bro_kirill',
         'card_farmer_timur',
         'card_ptu_ninja',
+        'card_drunk_artemiy',
+        'card_kiri_chan',
+        'card_hunchback_timur',
         'card_crazy_vanya',
-        'card_moscow_adventure',
+        'card_usaty_vanya',
+        'card_eblany',
+        'card_jopa_michaela',
+        'card_photographer_timur',
+        'card_timur_volga',
         'card_timur_svo',
-        'card_alpha_timur',
+        'card_crazy_artemiy',
       ],
-      rarityWeights: { common: 0, rare: 12, super_rare: 22, epic: 34, legendary: 32 },
+      rarityWeights: { common: 0, rare: 28, super_rare: 28, epic: 28, legendary: 16 },
+    },
+    {
+      id: 'case_tenet_vip',
+      name: 'TENET Автосалон VIP',
+      description: 'Флагманский VIP-кейс со всеми 7 золотыми легендами, включая Ваню Дрипчика, Альфа Тимура и TENET T4.',
+      price: 4100,
+      tier: 'legendary',
+      imageUrl: '/assets/cases/case_tenet_vip.png',
+      itemIds: [
+        'card_campfire_talk',
+        'card_schumachers',
+        'card_bro_kirill',
+        'card_farmer_timur',
+        'card_ptu_ninja',
+        'card_hunchback_timur',
+        'card_crazy_vanya',
+        'card_usaty_vanya',
+        'card_eblany',
+        'card_moscow_adventure',
+        'card_jopa_michaela',
+        'card_photographer_timur',
+        'card_timur_volga',
+        'card_timur_svo',
+        'card_crazy_artemiy',
+        'card_vanya_dripchik',
+        'card_alpha_timur',
+        'card_tenet_t4',
+      ],
+      rarityWeights: { common: 0, rare: 26, super_rare: 26, epic: 28, legendary: 20 },
     },
   ];
 
@@ -987,8 +930,9 @@ function createInitialDb(): DatabaseSchema {
     friendRequests: [],
     battleInvitations: [],
     battles: [],
-    catalogVersion: 7,
-    economyVersion: 4,
+    minigameSessions: [],
+    catalogVersion: 8,
+    economyVersion: 5,
   };
 }
 
@@ -1100,12 +1044,25 @@ function normalizeStoredDb(value: unknown): DatabaseSchema {
     friendRequests: Array.isArray(parsed.friendRequests) ? parsed.friendRequests : [],
     battleInvitations: Array.isArray(parsed.battleInvitations) ? parsed.battleInvitations : [],
     battles: Array.isArray(parsed.battles) ? parsed.battles : [],
+    minigameSessions: Array.isArray(parsed.minigameSessions)
+      ? parsed.minigameSessions.filter((s) => s && s.expiresAt > Date.now() - 3600_000).slice(-200)
+      : [],
     consumedTelegramHashes: Array.isArray(parsed.consumedTelegramHashes) ? parsed.consumedTelegramHashes : [],
   };
 
   const DEPRECATED_DUPLICATE_IDS = new Set(['card_spy_michael_epic']);
+  const DEPRECATED_SEED_CASE_IDS = new Set([
+    'case_hustle',
+    'case_ptu_kobalt',
+    'case_alpha_timur',
+    'case_custom_artemiy',
+    'case_custom_timur',
+    'case_custom_purple',
+    'case_custom_vanya',
+    'case_custom_oligarch',
+  ]);
 
-  if ((parsed.catalogVersion ?? 0) < 7) {
+  if ((parsed.catalogVersion ?? 0) < 8) {
     const seedItemsById = new Map(seed.items.map((seedItem) => [seedItem.id, seedItem]));
     normalized.items = normalized.items
       .filter((item) => !DEPRECATED_DUPLICATE_IDS.has(item.id))
@@ -1136,28 +1093,31 @@ function normalizeStoredDb(value: unknown): DatabaseSchema {
     }
 
     const seedCasesById = new Map(seed.cases.map((seedCase) => [seedCase.id, seedCase]));
-    normalized.cases = normalized.cases.map((caseBox) => {
-      const matchingSeed = seedCasesById.get(caseBox.id);
-      if (matchingSeed) {
+    normalized.cases = normalized.cases
+      .filter((caseBox) => !DEPRECATED_SEED_CASE_IDS.has(caseBox.id) && !caseBox.id.startsWith('case_custom_'))
+      .map((caseBox) => {
+        const matchingSeed = seedCasesById.get(caseBox.id);
+        if (matchingSeed) {
+          return {
+            ...matchingSeed,
+            rarityWeights: { ...matchingSeed.rarityWeights },
+          };
+        }
         return {
-          ...matchingSeed,
-          rarityWeights: { ...matchingSeed.rarityWeights },
+          ...caseBox,
+          itemIds: caseBox.itemIds.filter((id) => !DEPRECATED_DUPLICATE_IDS.has(id)),
         };
-      }
-      return {
-        ...caseBox,
-        itemIds: caseBox.itemIds.filter((id) => !DEPRECATED_DUPLICATE_IDS.has(id)),
-      };
-    });
+      });
 
     const existingCaseIds = new Set(normalized.cases.map((caseBox) => caseBox.id));
     for (const seedCase of seed.cases) {
       if (!existingCaseIds.has(seedCase.id)) {
-        const idx = seedCase.id === 'case_spy_cobalt' ? 2 : normalized.cases.length;
-        normalized.cases.splice(Math.min(idx, normalized.cases.length), 0, seedCase);
+        normalized.cases.push(seedCase);
         existingCaseIds.add(seedCase.id);
       }
     }
+    const seedOrder = new Map(seed.cases.map((c, idx) => [c.id, idx]));
+    normalized.cases.sort((a, b) => (seedOrder.get(a.id) ?? 999) - (seedOrder.get(b.id) ?? 999));
 
     normalized.users = normalized.users.map((user) => {
       const cleanedInventory = user.inventory.filter((inv) => !DEPRECATED_DUPLICATE_IDS.has(inv.itemId));
@@ -1200,8 +1160,8 @@ function normalizeStoredDb(value: unknown): DatabaseSchema {
 
     normalized.liveDrops = normalized.liveDrops.filter((drop) => !DEPRECATED_DUPLICATE_IDS.has(drop.itemId));
     normalized.upgradeHistory = normalized.upgradeHistory.filter((entry) => !DEPRECATED_DUPLICATE_IDS.has(entry.targetItemId));
-    normalized.catalogVersion = 7;
-    normalized.economyVersion = 4;
+    normalized.catalogVersion = 8;
+    normalized.economyVersion = 5;
   } else {
     normalized.items = normalized.items.map((item) => ({
       ...item,
@@ -1209,7 +1169,7 @@ function normalizeStoredDb(value: unknown): DatabaseSchema {
     }));
   }
 
-  if ((parsed.economyVersion ?? 0) < 4 || (parsed.catalogVersion ?? 0) < 7) {
+  if ((parsed.economyVersion ?? 0) < 5 || (parsed.catalogVersion ?? 0) < 8) {
     for (const caseBox of normalized.cases) {
       const caseItems = caseBox.itemIds
         .map((id) => normalized.items.find((item) => item.id === id))
@@ -1217,7 +1177,7 @@ function normalizeStoredDb(value: unknown): DatabaseSchema {
       const fairPrice = recommendedCasePrice(calculateCaseExpectedValue(caseBox, caseItems));
       if (fairPrice > 0) caseBox.price = fairPrice;
     }
-    normalized.economyVersion = 4;
+    normalized.economyVersion = 5;
   }
   return normalized;
 }
@@ -1658,6 +1618,7 @@ function buildPayload(userId?: string, authenticated = Boolean(userId)): Bootstr
     friends,
     friendRequestsReceived,
     battleInvitations,
+    minigames: getMinigameStatusMap(authenticated ? user : undefined),
     authenticated,
   };
 }
@@ -2455,18 +2416,274 @@ async function startServer() {
     invite.status = 'declined'; saveDb(); sendRealtimeToUser(invite.fromUserId, { type: 'battle_invitation_declined', username: user.username }); res.json({ payload: buildPayload(user.id) });
   });
 
-  app.post('/api/finance/deposit', (req, res) => {
+  app.post('/api/finance/deposit', (_req, res) => {
+    res.status(410).json({ error: 'Свободное пополнение отключено — зарабатывай TC в мини-играх!' });
+  });
+
+  app.post('/api/minigames/harvest/start', (req, res) => {
     const user = authenticatedUser(req, res);
     if (!user) return;
-    const amount = Number((req.body as { amount?: unknown }).amount);
-    if (!Number.isSafeInteger(amount) || amount < 50 || amount > 250000) {
-      res.status(400).json({ error: 'Укажи целое количество от 50 до 250 000 TC.' });
+    const now = Date.now();
+    const energy = syncMinigameEnergy(user, now);
+    const slot = energy.harvest;
+    if (slot.charges <= 0) {
+      res.status(400).json({ error: 'Заряды для «Урожая на Ферме» закончились. Подожди восстановления или сыграй в другую игру.' });
       return;
     }
-    user.balance += amount;
-    recordTx(user, 'manual_credit', amount, 'Временное игровое начисление');
+
+    if (slot.charges === MINIGAME_MAX_CHARGES) slot.lastRechargeAt = now;
+    slot.charges -= 1;
+    slot.playsCount += 1;
+
+    db.minigameSessions = (db.minigameSessions ?? []).filter(
+      (s) => !(s.userId === user.id && s.game === 'harvest' && s.status === 'active')
+    );
+    const session: PersistedMinigameSession = {
+      id: uid('mg_h'),
+      userId: user.id,
+      game: 'harvest',
+      status: 'active',
+      startedAt: now,
+      expiresAt: now + 90_000,
+    };
+    db.minigameSessions.push(session);
     saveDb();
-    res.json({ payload: buildPayload(user.id), credited: amount });
+    res.json({ sessionId: session.id, durationMs: 20_000, payload: buildPayload(user.id) });
+  });
+
+  app.post('/api/minigames/harvest/finish', (req, res) => {
+    const user = authenticatedUser(req, res);
+    if (!user) return;
+    const { sessionId, score, hits } = req.body as { sessionId?: string; score?: number; hits?: number };
+    const now = Date.now();
+    const session = (db.minigameSessions ?? []).find(
+      (s) => s.id === sessionId && s.userId === user.id && s.game === 'harvest' && s.status === 'active'
+    );
+    if (!session) {
+      res.status(404).json({ error: 'Игровая сессия не найдена или уже завершена.' });
+      return;
+    }
+    if (now > session.expiresAt) {
+      session.status = 'completed';
+      saveDb();
+      res.status(400).json({ error: 'Время сессии истекло.' });
+      return;
+    }
+
+    const elapsedMs = now - session.startedAt;
+    if (elapsedMs < 15_000) {
+      res.status(400).json({ error: 'Раунд ещё не завершён.' });
+      return;
+    }
+
+    const safeHits = Math.max(0, Math.min(60, Math.floor(Number(hits) || 0)));
+    const plausibleCap = safeHits * 55;
+    const reward = Math.max(0, Math.min(480, plausibleCap, Math.round(Number(score) || 0)));
+
+    session.status = 'completed';
+    const energy = syncMinigameEnergy(user, now);
+    if (reward > energy.harvest.bestScore) energy.harvest.bestScore = reward;
+    if (reward > 0) {
+      user.balance += reward;
+      recordTx(user, 'minigame_harvest', reward, 'Мини-игра «Урожай на Ферме»');
+    }
+    saveDb();
+    res.json({ reward, bestScore: energy.harvest.bestScore, payload: buildPayload(user.id) });
+  });
+
+  app.post('/api/minigames/mines/start', (req, res) => {
+    const user = authenticatedUser(req, res);
+    if (!user) return;
+    const now = Date.now();
+    const existingActive = (db.minigameSessions ?? []).find(
+      (s) => s.userId === user.id && s.game === 'mines' && s.status === 'active'
+    );
+    if (existingActive) {
+      res.json({ board: publicMinesBoard(existingActive), payload: buildPayload(user.id) });
+      return;
+    }
+
+    const energy = syncMinigameEnergy(user, now);
+    const slot = energy.mines;
+    if (slot.charges <= 0) {
+      res.status(400).json({ error: 'Заряды для «Минного поля ПТУ» закончились. Подожди восстановления!' });
+      return;
+    }
+    if (slot.charges === MINIGAME_MAX_CHARGES) slot.lastRechargeAt = now;
+    slot.charges -= 1;
+    slot.playsCount += 1;
+
+    const indices = Array.from({ length: MINES_GRID_SIZE }, (_, i) => i);
+    for (let i = indices.length - 1; i > 0; i--) {
+      const j = crypto.randomInt(0, i + 1);
+      [indices[i], indices[j]] = [indices[j], indices[i]];
+    }
+    const mineIndices = indices.slice(0, MINES_TRAP_COUNT);
+
+    const session: PersistedMinigameSession = {
+      id: uid('mg_m'),
+      userId: user.id,
+      game: 'mines',
+      status: 'active',
+      startedAt: now,
+      expiresAt: now + 3600_000,
+      mineIndices,
+      revealedSafe: [],
+      currentBank: 0,
+    };
+    db.minigameSessions = db.minigameSessions ?? [];
+    db.minigameSessions.push(session);
+    saveDb();
+    res.json({ board: publicMinesBoard(session), payload: buildPayload(user.id) });
+  });
+
+  app.post('/api/minigames/mines/step', (req, res) => {
+    const user = authenticatedUser(req, res);
+    if (!user) return;
+    const { sessionId, cellIndex } = req.body as { sessionId?: string; cellIndex?: number };
+    const idx = Math.floor(Number(cellIndex));
+    if (!Number.isInteger(idx) || idx < 0 || idx >= MINES_GRID_SIZE) {
+      res.status(400).json({ error: 'Неверная клетка поля.' });
+      return;
+    }
+    const session = (db.minigameSessions ?? []).find(
+      (s) => s.id === sessionId && s.userId === user.id && s.game === 'mines' && s.status === 'active'
+    );
+    if (!session) {
+      res.status(404).json({ error: 'Раунд не найден или уже завершён.' });
+      return;
+    }
+    const revealedSafe = session.revealedSafe ?? [];
+    if (revealedSafe.includes(idx)) {
+      res.json({ board: publicMinesBoard(session), payload: buildPayload(user.id) });
+      return;
+    }
+
+    if ((session.mineIndices ?? []).includes(idx)) {
+      session.status = 'busted';
+      session.currentBank = 0;
+      saveDb();
+      res.json({ board: publicMinesBoard(session), hitTrapIndex: idx, reward: 0, payload: buildPayload(user.id) });
+      return;
+    }
+
+    const stepBonus = MINES_STEP_BONUSES[Math.min(revealedSafe.length, MINES_STEP_BONUSES.length - 1)];
+    revealedSafe.push(idx);
+    session.revealedSafe = revealedSafe;
+    session.currentBank = (session.currentBank ?? 0) + stepBonus;
+
+    let reward = 0;
+    if (revealedSafe.length >= MINES_GRID_SIZE - MINES_TRAP_COUNT) {
+      session.status = 'completed';
+      reward = session.currentBank;
+      const energy = syncMinigameEnergy(user, Date.now());
+      if (reward > energy.mines.bestScore) energy.mines.bestScore = reward;
+      user.balance += reward;
+      recordTx(user, 'minigame_mines', reward, 'Мини-игра «Минное поле ПТУ» (полная зачистка)');
+    }
+
+    saveDb();
+    res.json({ board: publicMinesBoard(session), stepBonus, reward, payload: buildPayload(user.id) });
+  });
+
+  app.post('/api/minigames/mines/cashout', (req, res) => {
+    const user = authenticatedUser(req, res);
+    if (!user) return;
+    const { sessionId } = req.body as { sessionId?: string };
+    const session = (db.minigameSessions ?? []).find(
+      (s) => s.id === sessionId && s.userId === user.id && s.game === 'mines' && s.status === 'active'
+    );
+    if (!session) {
+      res.status(404).json({ error: 'Активный раунд не найден.' });
+      return;
+    }
+    const reward = Math.max(0, Math.round(session.currentBank ?? 0));
+    if (reward <= 0) {
+      res.status(400).json({ error: 'Открой хотя бы одну безопасную клетку.' });
+      return;
+    }
+    session.status = 'completed';
+    const energy = syncMinigameEnergy(user, Date.now());
+    if (reward > energy.mines.bestScore) energy.mines.bestScore = reward;
+    user.balance += reward;
+    recordTx(user, 'minigame_mines', reward, `Мини-игра «Минное поле ПТУ» (${session.revealedSafe?.length ?? 0} кл.)`);
+    saveDb();
+    res.json({ board: publicMinesBoard(session), reward, payload: buildPayload(user.id) });
+  });
+
+  app.post('/api/minigames/race/start', (req, res) => {
+    const user = authenticatedUser(req, res);
+    if (!user) return;
+    const now = Date.now();
+    const energy = syncMinigameEnergy(user, now);
+    const slot = energy.race;
+    if (slot.charges <= 0) {
+      res.status(400).json({ error: 'Топливо для «Гонки на TENET T4» закончилось. Подожди восстановления!' });
+      return;
+    }
+    if (slot.charges === MINIGAME_MAX_CHARGES) slot.lastRechargeAt = now;
+    slot.charges -= 1;
+    slot.playsCount += 1;
+
+    db.minigameSessions = (db.minigameSessions ?? []).filter(
+      (s) => !(s.userId === user.id && s.game === 'race' && s.status === 'active')
+    );
+    const session: PersistedMinigameSession = {
+      id: uid('mg_r'),
+      userId: user.id,
+      game: 'race',
+      status: 'active',
+      startedAt: now,
+      expiresAt: now + 120_000,
+    };
+    db.minigameSessions.push(session);
+    saveDb();
+    res.json({ sessionId: session.id, durationMs: 25_000, payload: buildPayload(user.id) });
+  });
+
+  app.post('/api/minigames/race/finish', (req, res) => {
+    const user = authenticatedUser(req, res);
+    if (!user) return;
+    const { sessionId, coinsCollected, distanceMeters, survived } = req.body as {
+      sessionId?: string;
+      coinsCollected?: number;
+      distanceMeters?: number;
+      survived?: boolean;
+    };
+    const now = Date.now();
+    const session = (db.minigameSessions ?? []).find(
+      (s) => s.id === sessionId && s.userId === user.id && s.game === 'race' && s.status === 'active'
+    );
+    if (!session) {
+      res.status(404).json({ error: 'Заезд не найден или уже завершён.' });
+      return;
+    }
+    if (now > session.expiresAt) {
+      session.status = 'completed';
+      saveDb();
+      res.status(400).json({ error: 'Время заезда истекло.' });
+      return;
+    }
+
+    const elapsedMs = now - session.startedAt;
+    const maxPlausibleCoins = Math.min(18, Math.floor(elapsedMs / 900) + 1);
+    const cleanCoins = Math.max(0, Math.min(maxPlausibleCoins, Math.floor(Number(coinsCollected) || 0)));
+    const cleanDist = Math.max(0, Math.min(1800, Math.floor(Number(distanceMeters) || 0)));
+    const isSurvived = Boolean(survived) && elapsedMs >= 20_000;
+
+    const coinsReward = cleanCoins * 20;
+    const distanceBonus = isSurvived ? 120 : Math.min(80, Math.floor(cleanDist / 14));
+    const reward = Math.max(0, Math.min(500, coinsReward + distanceBonus));
+
+    session.status = 'completed';
+    const energy = syncMinigameEnergy(user, now);
+    if (reward > energy.race.bestScore) energy.race.bestScore = reward;
+    if (reward > 0) {
+      user.balance += reward;
+      recordTx(user, 'minigame_race', reward, 'Мини-игра «Гонка на TENET T4»');
+    }
+    saveDb();
+    res.json({ reward, bestScore: energy.race.bestScore, payload: buildPayload(user.id) });
   });
 
   app.post('/api/bonus/daily', (req, res) => {

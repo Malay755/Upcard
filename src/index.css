@@ -8,6 +8,11 @@
     --font-mono: 'JetBrains Mono', monospace;
   }
 
+  html {
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+
   body {
     font-family: var(--font-sans);
     background-color: #0b0d10;
@@ -16,6 +21,16 @@
       radial-gradient(ellipse 80% 45% at 50% 0%, rgba(250, 204, 21, 0.04) 0%, transparent 70%),
       radial-gradient(circle at 50% 50%, #101216 0%, #090b0d 100%);
     min-height: 100vh;
+  }
+
+  button,
+  [role="button"],
+  a,
+  input,
+  select,
+  label {
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
   }
 
   h1, h2, h3, .font-display {

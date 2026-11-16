@@ -5,6 +5,28 @@ export type RollMode = 'under' | 'over';
 export type AppTab = 'upgrade' | 'contracts' | 'cases' | 'battles' | 'bonuses' | 'profile';
 export type BattleMode = 'cases' | 'upgrade';
 export type BattleStatus = 'waiting' | 'completed' | 'cancelled';
+export type MinigameId = 'harvest' | 'mines' | 'race';
+
+export interface MinigameEnergySlot {
+  charges: number;
+  maxCharges: number;
+  nextRechargeAt: number | null;
+  bestScore: number;
+  playsCount: number;
+}
+
+export type MinigameStatusMap = Record<MinigameId, MinigameEnergySlot>;
+
+export interface MinesBoardState {
+  sessionId: string;
+  gridSize: number;
+  minesCount: number;
+  revealedSafe: number[];
+  mineLocations?: number[];
+  currentBank: number;
+  nextStepBonus: number;
+  status: 'playing' | 'cashed_out' | 'busted';
+}
 
 export interface ItemCard {
   id: string;
@@ -49,7 +71,10 @@ export type TransactionType =
   | 'referral_commission'
   | 'collection_bonus'
   | 'contract_craft'
-  | 'achievement_reward';
+  | 'achievement_reward'
+  | 'minigame_harvest'
+  | 'minigame_mines'
+  | 'minigame_race';
 
 export interface Transaction {
   id: string;
@@ -230,6 +255,12 @@ export interface UserProfile {
   unlockedAchievementIds: AchievementId[];
   claimedAchievementIds: AchievementId[];
   achievementStats?: UserAchievementStats;
+  minigameEnergy?: Record<MinigameId, {
+    charges: number;
+    lastRechargeAt: number;
+    bestScore: number;
+    playsCount: number;
+  }>;
   inventory: InventoryItem[];
   createdAt: number;
 }
@@ -250,5 +281,6 @@ export interface BootstrapPayload {
   friends: FriendSummary[];
   friendRequestsReceived: FriendRequestSummary[];
   battleInvitations: BattleInvitationSummary[];
+  minigames?: MinigameStatusMap;
   authenticated?: boolean;
 }

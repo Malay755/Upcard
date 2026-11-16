@@ -66,6 +66,9 @@ const TX_LABELS: Record<TransactionType, string> = {
   collection_bonus: 'Бонус за коллекцию',
   contract_craft: 'Контракт 7-в-1',
   achievement_reward: 'Награда за достижение',
+  minigame_harvest: 'Игра: Урожай на Ферме',
+  minigame_mines: 'Игра: Минное поле ПТУ',
+  minigame_race: 'Игра: Гонка на TENET T4',
 };
 
 const RARITY_TILE_ACCENT: Record<Rarity, { bar: string; glow: string }> = {

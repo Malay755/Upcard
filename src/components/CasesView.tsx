@@ -2,7 +2,6 @@ import React, { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'rea
 import {
   ArrowLeft,
   CheckCircle2,
-  ChevronDown,
   Coins,
   RotateCcw,
   Search,
@@ -35,7 +34,7 @@ interface CasesViewProps {
     xpGained?: number;
   }>;
   onSellItems: (instanceIds: string[]) => Promise<void>;
-  onOpenDeposit: () => void;
+  onOpenEarn: () => void;
 }
 
 const CARD_SLOT_WIDTH = 144;
@@ -74,14 +73,6 @@ const STAGE_GLOW_BY_TIER: Record<Rarity, { backgroundImage: string; borderClass:
       'radial-gradient(ellipse 75% 55% at 50% 34%, rgba(250, 204, 21, 0.2) 0%, rgba(20, 22, 26, 0.96) 72%), linear-gradient(180deg, #221B11 0%, #14161A 100%)',
     borderClass: 'border-amber-400/25',
   },
-};
-
-const RISK_LABEL_BY_TIER: Record<Rarity, { label: string; textClass: string }> = {
-  common: { label: 'LOW', textClass: 'text-slate-300' },
-  rare: { label: 'MEDIUM', textClass: 'text-emerald-400' },
-  super_rare: { label: 'RARE+', textClass: 'text-sky-400' },
-  epic: { label: 'HIGH', textClass: 'text-purple-400' },
-  legendary: { label: 'VIP', textClass: 'text-[#FACC15]' },
 };
 
 const CompactDropItemTile: React.FC<{ item: ItemCard; probability: number }> = ({
@@ -143,12 +134,10 @@ export const CasesView: React.FC<CasesViewProps> = ({
   onOpenTelegramLogin,
   onOpenCase,
   onSellItems,
-  onOpenDeposit,
+  onOpenEarn,
 }) => {
   const [activeCaseId, setActiveCaseId] = useState<string | null>(null);
-  const [caseTab, setCaseTab] = useState<'all' | 'author'>('all');
   const [caseSearch, setCaseSearch] = useState('');
-  const [showAllAuthor, setShowAllAuthor] = useState(false);
 
   const [fastOpen, setFastOpen] = useState(false);
   const [isOpeningLid, setIsOpeningLid] = useState(false);
@@ -211,16 +200,6 @@ export const CasesView: React.FC<CasesViewProps> = ({
       (c) => c.name.toLowerCase().includes(q) || c.description.toLowerCase().includes(q)
     );
   }, [cases, caseSearch]);
-
-  const officialCases = useMemo(
-    () => filteredCases.filter((c) => !c.id.startsWith('case_custom') && c.id !== 'case_drips'),
-    [filteredCases]
-  );
-
-  const authorCases = useMemo(() => {
-    const custom = filteredCases.filter((c) => c.id.startsWith('case_custom') || c.id === 'case_drips');
-    return custom.length > 0 || caseSearch.trim().length > 0 ? custom : filteredCases.slice(-2);
-  }, [filteredCases, caseSearch]);
 
   const handleSpinCase = async () => {
     if (!activeCase || isOpening || isOpeningLid) return;
@@ -354,188 +333,78 @@ export const CasesView: React.FC<CasesViewProps> = ({
 
         {/* Single-Line Filter Toolbar Panel matching Upgrader Catalog Header */}
         <div className="bg-[#14161A] border border-white/[0.06] rounded-xl px-5 py-3.5 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-6">
-            <button
-              type="button"
-              onClick={() => setCaseTab('all')}
-              className={`relative py-1.5 text-xs font-display font-bold uppercase tracking-wider transition-colors cursor-pointer ${
-                caseTab === 'all' ? 'text-[#FACC15]' : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              <span>Все кейсы</span>
-              {caseTab === 'all' && (
-                <span className="absolute inset-x-0 -bottom-[15px] h-[2px] bg-[#FACC15] shadow-[0_0_8px_rgba(250,204,21,0.75)] rounded-full" />
-              )}
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setCaseTab('author')}
-              className={`relative py-1.5 text-xs font-display font-bold uppercase tracking-wider transition-colors cursor-pointer ${
-                caseTab === 'author' ? 'text-[#FACC15]' : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              <span>Авторские кейсы</span>
-              {caseTab === 'author' && (
-                <span className="absolute inset-x-0 -bottom-[15px] h-[2px] bg-[#FACC15] shadow-[0_0_8px_rgba(250,204,21,0.75)] rounded-full" />
-              )}
-            </button>
+          <div className="flex items-center gap-3">
+            <span className="text-xs font-display font-bold uppercase tracking-wider text-[#FACC15]">
+              Доступные кейсы
+            </span>
+            <span className="text-[11px] font-mono-num text-slate-500">
+              {filteredCases.length} шт.
+            </span>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2.5">
-            <div className="relative w-44 sm:w-52">
-              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-              <input
-                type="text"
-                value={caseSearch}
-                onChange={(e) => setCaseSearch(e.target.value)}
-                placeholder="Поиск кейса..."
-                aria-label="Поиск кейса"
-                className="w-full pl-8 pr-2.5 py-1.5 rounded-lg bg-[#0D0F12] border border-white/[0.08] text-xs text-white focus:outline-none focus:border-[#FACC15]"
-              />
-            </div>
-
+          <div className="relative w-full sm:w-56">
+            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <input
+              type="text"
+              value={caseSearch}
+              onChange={(e) => setCaseSearch(e.target.value)}
+              placeholder="Поиск кейса..."
+              aria-label="Поиск кейса"
+              className="w-full pl-8 pr-2.5 py-2 rounded-lg bg-[#0D0F12] border border-white/[0.08] text-xs text-white focus:outline-none focus:border-[#FACC15]"
+            />
           </div>
         </div>
 
-        {/* Section 1: Official Cases */}
-        {caseTab === 'all' && officialCases.length > 0 && (
+        {/* Consolidated Cases Catalog */}
+        {filteredCases.length > 0 ? (
           <section className="bg-[#14161A] border border-white/[0.06] rounded-xl p-5 space-y-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <svg viewBox="0 0 24 24" className="w-4 h-4 text-[#FACC15]" fill="currentColor" aria-hidden="true">
-                  <path d="M12 5L5 12L7.2 14.2L12 9.4L16.8 14.2L19 12L12 5Z" />
-                  <path d="M12 11L5 18L7.2 20.2L12 15.4L16.8 20.2L19 18L12 11Z" opacity="0.55" />
-                </svg>
-                <h2 className="text-sm font-display font-bold text-white">Основные кейсы</h2>
-              </div>
-              <span className="text-[11px] font-mono-num text-slate-500">
-                {officialCases.length} шт.
-              </span>
-            </div>
-
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-              {officialCases.map((caseBox, idx) => {
+              {filteredCases.map((caseBox, idx) => {
                 const tileStyle = RARITY_TILE_ACCENT[caseBox.tier] ?? RARITY_TILE_ACCENT.rare;
                 return (
                   <ScrollReveal key={caseBox.id} delayMs={idx * 35} className="h-full">
-                  <button
-                    type="button"
-                    onClick={() => setActiveCaseId(caseBox.id)}
-                    className={`group relative rounded-xl overflow-hidden border border-white/[0.06] hover:border-[#FACC15]/55 text-left transition-[transform,box-shadow,border-color] duration-300 ease-out hover:-translate-y-1 hover:shadow-xl cursor-pointer p-3 flex flex-col justify-between h-[210px] bg-gradient-to-b ${tileStyle.glow} via-[#181B22] to-[#121419] motion-press`}
-                  >
-                    <span aria-hidden="true" className={`absolute top-0 inset-x-0 h-[2px] ${tileStyle.bar}`} />
+                    <button
+                      type="button"
+                      onClick={() => setActiveCaseId(caseBox.id)}
+                      className={`w-full group relative rounded-xl overflow-hidden border border-white/[0.06] hover:border-[#FACC15]/55 text-left transition-[transform,box-shadow,border-color] duration-300 ease-out hover:-translate-y-1 hover:shadow-xl cursor-pointer p-3 flex flex-col justify-between h-[218px] bg-gradient-to-b ${tileStyle.glow} via-[#181B22] to-[#121419] motion-press`}
+                    >
+                      <span aria-hidden="true" className={`absolute top-0 inset-x-0 h-[2px] ${tileStyle.bar}`} />
 
-                    <div className="relative z-10 flex items-center justify-between gap-1">
-                      <span className="inline-flex items-center gap-1 text-[11px] font-mono-num font-bold text-[#FACC15]">
-                        <span>{formatTC(caseBox.price)}</span>
-                        <span className="w-2.5 h-2.5 rounded-full bg-[#FACC15] text-[#0B0D10] text-[7px] font-black inline-flex items-center justify-center">
-                          T
+                      <div className="relative z-10 flex items-center justify-between gap-1">
+                        <span className="inline-flex items-center gap-1 text-[11px] font-mono-num font-bold text-[#FACC15]">
+                          <span>{formatTC(caseBox.price)}</span>
+                          <span className="w-2.5 h-2.5 rounded-full bg-[#FACC15] text-[#0B0D10] text-[7px] font-black inline-flex items-center justify-center">
+                            T
+                          </span>
                         </span>
-                      </span>
-                      <span className="text-[9px] font-display font-bold uppercase tracking-wider text-[#FACC15] bg-[#FACC15]/10 px-1.5 py-0.5 rounded">
-                        NEW
-                      </span>
-                    </div>
-
-                    <div className="relative flex-1 flex items-center justify-center my-1 min-h-0">
-                      <CaseThumbnail3D
-                        caseBox={caseBox}
-                        className="relative w-full h-full object-contain drop-shadow-[0_10px_16px_rgba(0,0,0,0.75)] transition-transform duration-500 ease-out group-hover:scale-[1.03]"
-                      />
-                    </div>
-
-                    <div className="relative z-10 text-center">
-                      <div className="text-xs font-bold text-white truncate">{caseBox.name}</div>
-                      <div className="text-[10px] text-slate-400 truncate">
-                        {caseBox.itemIds.length} карт · {RARITY_LABELS[caseBox.tier]}
+                        <span className="text-[9px] font-display font-bold uppercase tracking-wider text-slate-300 bg-white/[0.06] px-1.5 py-0.5 rounded">
+                          {caseBox.itemIds.length} карт
+                        </span>
                       </div>
-                    </div>
-                  </button>
+
+                      <div className="relative flex-1 flex items-center justify-center my-1 min-h-0">
+                        <CaseThumbnail3D
+                          caseBox={caseBox}
+                          className="relative w-full h-full object-contain drop-shadow-[0_10px_16px_rgba(0,0,0,0.75)] transition-transform duration-500 ease-out group-hover:scale-[1.03]"
+                        />
+                      </div>
+
+                      <div className="relative z-10 text-center">
+                        <div className="text-xs font-bold text-white truncate">{caseBox.name}</div>
+                        <div className="text-[10px] text-slate-400 truncate">
+                          {RARITY_LABELS[caseBox.tier]}
+                        </div>
+                      </div>
+                    </button>
                   </ScrollReveal>
                 );
               })}
             </div>
           </section>
-        )}
-
-        {caseTab === 'all' && filteredCases.length === 0 && (
+        ) : (
           <div className="bg-[#14161A] border border-white/[0.06] rounded-xl py-12 text-center text-sm text-slate-400">
             Кейсы по запросу «{caseSearch}» не найдены.
           </div>
-        )}
-
-        {/* Section 2: Author Cases */}
-        {(authorCases.length > 0 || caseTab === 'author') && (
-          <section className="bg-[#14161A] border border-white/[0.06] rounded-xl p-5 space-y-4">
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
-                <svg viewBox="0 0 24 24" className="w-4 h-4 text-[#FACC15]" fill="currentColor" aria-hidden="true">
-                  <path d="M12 5L5 12L7.2 14.2L12 9.4L16.8 14.2L19 12L12 5Z" />
-                  <path d="M12 11L5 18L7.2 20.2L12 15.4L16.8 20.2L19 18L12 11Z" opacity="0.55" />
-                </svg>
-                <h2 className="text-sm font-display font-bold text-white">Авторские кейсы</h2>
-              </div>
-              <span className="text-[11px] font-mono-num text-slate-500">
-                {(showAllAuthor ? filteredCases : authorCases).length} шт.
-              </span>
-            </div>
-
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-              {(showAllAuthor ? filteredCases : authorCases).map((caseBox, idx) => {
-                const tileStyle = RARITY_TILE_ACCENT[caseBox.tier] ?? RARITY_TILE_ACCENT.rare;
-                const risk = RISK_LABEL_BY_TIER[caseBox.tier] ?? RISK_LABEL_BY_TIER.rare;
-                return (
-                  <ScrollReveal key={`author-${caseBox.id}`} delayMs={idx * 35} className="h-full">
-                  <button
-                    type="button"
-                    onClick={() => setActiveCaseId(caseBox.id)}
-                    className={`group relative rounded-xl overflow-hidden border border-white/[0.06] hover:border-[#FACC15]/55 text-left transition-[transform,box-shadow,border-color] duration-300 ease-out hover:-translate-y-1 hover:shadow-xl cursor-pointer p-3 flex flex-col justify-between h-[210px] bg-gradient-to-b ${tileStyle.glow} via-[#181B22] to-[#121419] motion-press`}
-                  >
-                    <span aria-hidden="true" className={`absolute top-0 inset-x-0 h-[2px] ${tileStyle.bar}`} />
-
-                    <div className="relative z-10 flex items-center justify-between gap-1">
-                      <span className="inline-flex items-center gap-1 text-[11px] font-mono-num font-bold text-[#FACC15]">
-                        <span>{formatTC(caseBox.price)}</span>
-                        <span className="w-2.5 h-2.5 rounded-full bg-[#FACC15] text-[#0B0D10] text-[7px] font-black inline-flex items-center justify-center">
-                          T
-                        </span>
-                      </span>
-                      <span className={`text-[9px] font-display font-bold uppercase tracking-wider ${risk.textClass}`}>
-                        ★ {risk.label}
-                      </span>
-                    </div>
-
-                    <div className="relative flex-1 flex items-center justify-center my-1 min-h-0">
-                      <CaseThumbnail3D
-                        caseBox={caseBox}
-                        className="relative w-full h-full object-contain drop-shadow-[0_10px_16px_rgba(0,0,0,0.75)] transition-transform duration-500 ease-out group-hover:scale-[1.03]"
-                      />
-                    </div>
-
-                    <div className="relative z-10 text-center">
-                      <div className="text-xs font-bold text-white truncate">{caseBox.name}</div>
-                      <div className="text-[10px] text-slate-400 truncate">
-                        {caseBox.itemIds.length} карт · {RARITY_LABELS[caseBox.tier]}
-                      </div>
-                    </div>
-                  </button>
-                  </ScrollReveal>
-                );
-              })}
-            </div>
-
-            {filteredCases.length > authorCases.length && (
-              <button
-                type="button"
-                onClick={() => setShowAllAuthor((v) => !v)}
-                className="w-full py-2.5 rounded-lg bg-[#0D0F12] hover:bg-[#191C22] border border-white/[0.06] text-xs font-display font-bold uppercase tracking-wider text-slate-300 hover:text-[#FACC15] transition-colors cursor-pointer flex items-center justify-center gap-1.5"
-              >
-                <span>{showAllAuthor ? 'Скрыть' : 'Показать ещё'}</span>
-                <ChevronDown className={`w-3.5 h-3.5 transition-transform ${showAllAuthor ? 'rotate-180' : ''}`} />
-              </button>
-            )}
-          </section>
         )}
       </div>
     );
@@ -731,10 +600,10 @@ export const CasesView: React.FC<CasesViewProps> = ({
               {!isOpening && !isOpeningLid && user.balance < activeCase.price && (
                 <button
                   type="button"
-                  onClick={onOpenDeposit}
+                  onClick={onOpenEarn}
                   className="px-5 py-3 rounded-xl bg-white/[0.08] hover:bg-white/[0.14] border border-white/15 text-white font-display font-bold text-xs uppercase tracking-wider cursor-pointer transition-colors"
                 >
-                  Пополнить баланс
+                  Заработать TC
                 </button>
               )}
               <button
