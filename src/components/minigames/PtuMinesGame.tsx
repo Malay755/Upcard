@@ -1,5 +1,8 @@
 import React, { useState } from 'react';
-import { Bomb, Check, Coins, Play, RotateCcw, ShieldAlert } from 'lucide-react';
+import { Bomb, Check, Coins, Play, RotateCcw } from 'lucide-react';
+import ptuCoverSprite from '../../assets/images/ptu_cover_sprite_1794862140911.jpg';
+import ptuSafeSprite from '../../assets/images/ptu_safe_sprite_1794862140191.jpg';
+import ptuTrapSprite from '../../assets/images/ptu_trap_sprite_1794862141403.jpg';
 import type { MinesBoardState, MinigameEnergySlot } from '../../types';
 import { formatTC } from '../../utils/economics';
 import { soundFX } from '../../utils/sound';
@@ -13,8 +16,6 @@ interface PtuMinesGameProps {
   onCashout: (sessionId: string) => Promise<{ board: MinesBoardState; reward: number }>;
   onBack: () => void;
 }
-
-const TRAP_ART = '/assets/cards/drunk_artemiy.png';
 
 export const PtuMinesGame: React.FC<PtuMinesGameProps> = ({
   energy,
@@ -30,7 +31,7 @@ export const PtuMinesGame: React.FC<PtuMinesGameProps> = ({
   const [busyAction, setBusyAction] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [lastCashout, setLastCashout] = useState<number | null>(null);
-  const [trapImgBroken, setTrapImgBroken] = useState(false);
+  const [brokenSprites, setBrokenSprites] = useState<Record<string, boolean>>({});
 
   const handleStart = async () => {
     if (!isAuthorized) {
@@ -120,7 +121,7 @@ export const PtuMinesGame: React.FC<PtuMinesGameProps> = ({
           )}
         </div>
         <div className="text-xs font-mono-num text-slate-300">
-          Попытки {energy.charges}/{energy.maxCharges}
+          Сегодня {energy.charges}/{energy.maxCharges}
         </div>
       </div>
 
@@ -132,13 +133,28 @@ export const PtuMinesGame: React.FC<PtuMinesGameProps> = ({
 
       {!board && (
         <div className="rounded-xl border border-white/[0.07] bg-[#0D0F12] p-5 text-center space-y-4">
-          <div className="mx-auto inline-flex h-16 w-16 items-center justify-center rounded-2xl border border-amber-400/30 bg-amber-400/10 text-[#FACC15]">
-            <ShieldAlert className="h-8 w-8" />
+          <div className="mx-auto flex items-center justify-center gap-3">
+            <div className="h-20 w-20 overflow-hidden rounded-xl border border-rose-400/45 bg-[#161920] shadow-[0_0_24px_rgba(244,63,94,0.2)]">
+              <img
+                src={ptuTrapSprite}
+                alt="Ловушка ПТУ"
+                referrerPolicy="no-referrer"
+                className="h-full w-full object-cover"
+              />
+            </div>
+            <div className="h-20 w-20 overflow-hidden rounded-xl border border-emerald-400/45 bg-[#161920] shadow-[0_0_24px_rgba(16,185,129,0.2)]">
+              <img
+                src={ptuSafeSprite}
+                alt="Тайник с монетой TC"
+                referrerPolicy="no-referrer"
+                className="h-full w-full object-cover"
+              />
+            </div>
           </div>
           <div className="space-y-1.5">
             <h3 className="font-display text-lg font-extrabold text-white">Минное поле ПТУ</h3>
             <p className="text-xs text-slate-400 max-w-md mx-auto leading-relaxed">
-              На поле 4×4 спрятаны <span className="text-rose-400 font-semibold">3 ловушки ПТУ</span>. Вход бесплатный — каждый верный шаг увеличивает банк, и ты можешь забрать TC в любой момент или рискнуть ради <span className="font-mono-num text-[#FACC15]">1 100 TC</span> за полную зачистку.
+              На поле 4×4 спрятаны <span className="text-rose-400 font-semibold">3 ловушки ПТУ</span>. Вход бесплатный — каждый верный шаг увеличивает банк, и ты можешь забрать TC в любой момент или рискнуть ради <span className="font-mono-num text-[#FACC15]">1 100 TC</span>.
             </p>
           </div>
           <button
@@ -152,7 +168,7 @@ export const PtuMinesGame: React.FC<PtuMinesGameProps> = ({
               {!isAuthorized
                 ? 'Войти и открыть поле'
                 : energy.charges <= 0
-                ? 'Нет попыток'
+                ? 'Попытки на сегодня вышли'
                 : busyAction
                 ? 'Генерируем поле...'
                 : 'Начать вылазку'}
@@ -183,42 +199,70 @@ export const PtuMinesGame: React.FC<PtuMinesGameProps> = ({
                       ? `Безопасная клетка ${idx + 1}`
                       : `Закрытая клетка ${idx + 1}`
                   }
-                  className={`relative min-h-[64px] sm:min-h-[74px] rounded-xl border flex flex-col items-center justify-center transition-all active:scale-95 ${
+                  className={`relative min-h-[68px] sm:min-h-[78px] overflow-hidden rounded-xl border flex flex-col items-center justify-center transition-all active:scale-95 ${
                     isMine
-                      ? 'border-rose-500 bg-rose-950/60 shadow-[0_0_16px_rgba(244,63,94,0.28)]'
+                      ? 'border-rose-500 bg-rose-950/75 shadow-[0_0_16px_rgba(244,63,94,0.34)]'
                       : isSafeRevealed
-                      ? 'border-emerald-400/55 bg-emerald-950/35 text-emerald-300'
+                      ? 'border-emerald-400/65 bg-emerald-950/45 text-emerald-300 shadow-[0_0_14px_rgba(16,185,129,0.2)]'
                       : isPlaying
-                      ? 'border-white/[0.1] bg-[#181B22] hover:border-[#FACC15]/50 hover:bg-[#1F232C] cursor-pointer'
+                      ? 'border-white/[0.12] bg-[#181B22] hover:border-[#FACC15]/60 cursor-pointer'
                       : 'border-white/[0.06] bg-[#14161A] opacity-65'
                   }`}
                 >
                   {isMine ? (
-                    <div className="flex flex-col items-center gap-0.5">
-                      {!trapImgBroken ? (
+                    <>
+                      {!brokenSprites.trap ? (
                         <img
-                          src={TRAP_ART}
+                          src={ptuTrapSprite}
                           alt="Ловушка БУМ"
                           referrerPolicy="no-referrer"
-                          onError={() => setTrapImgBroken(true)}
-                          className="h-8 w-8 rounded-lg object-cover border border-rose-400/70"
+                          draggable={false}
+                          onError={() => setBrokenSprites((p) => ({ ...p, trap: true }))}
+                          className="absolute inset-0 h-full w-full object-cover"
                         />
                       ) : (
-                        <Bomb className="h-5 w-5 text-rose-400" />
+                        <Bomb className="h-6 w-6 text-rose-400" />
                       )}
-                      <span className="text-[10px] font-display font-extrabold text-rose-300 leading-none">
+                      <span className="relative z-10 mt-auto mb-1 rounded bg-rose-950/90 px-1.5 py-0.5 text-[10px] font-display font-extrabold text-rose-200 border border-rose-400/40 leading-none">
                         БУМ
                       </span>
-                    </div>
+                    </>
                   ) : isSafeRevealed ? (
-                    <div className="flex flex-col items-center gap-1">
-                      <Check className="h-5 w-5 text-emerald-400" />
-                      <span className="text-[10px] font-mono-num font-bold text-[#FACC15]">+TC</span>
-                    </div>
+                    <>
+                      {!brokenSprites.safe ? (
+                        <img
+                          src={ptuSafeSprite}
+                          alt="Сейф ПТУ"
+                          referrerPolicy="no-referrer"
+                          draggable={false}
+                          onError={() => setBrokenSprites((p) => ({ ...p, safe: true }))}
+                          className="absolute inset-0 h-full w-full object-cover"
+                        />
+                      ) : (
+                        <Check className="h-5 w-5 text-emerald-400" />
+                      )}
+                      <span className="relative z-10 mt-auto mb-1 rounded bg-emerald-950/90 px-1.5 py-0.5 text-[10px] font-mono-num font-bold text-[#FACC15] border border-emerald-400/45 leading-none">
+                        +TC
+                      </span>
+                    </>
                   ) : isLoading ? (
-                    <span className="h-4 w-4 rounded-full border-2 border-[#FACC15] border-t-transparent animate-spin" />
+                    <span className="h-5 w-5 rounded-full border-2 border-[#FACC15] border-t-transparent animate-spin" />
                   ) : (
-                    <span className="h-2.5 w-2.5 rounded-full bg-white/15" />
+                    <>
+                      {!brokenSprites.cover ? (
+                        <img
+                          src={ptuCoverSprite}
+                          alt=""
+                          referrerPolicy="no-referrer"
+                          draggable={false}
+                          onError={() => setBrokenSprites((p) => ({ ...p, cover: true }))}
+                          className="absolute inset-0 h-full w-full object-cover opacity-90 transition-opacity hover:opacity-100"
+                        />
+                      ) : (
+                        <span className="h-2.5 w-2.5 rounded-full bg-white/15" />
+                      )}
+                      <span className="relative z-10 h-1.5 w-1.5 rounded-full bg-[#FACC15]/50" />
+                    </>
                   )}
                 </button>
               );

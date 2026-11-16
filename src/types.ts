@@ -258,6 +258,7 @@ export interface UserProfile {
   minigameEnergy?: Record<MinigameId, {
     charges: number;
     lastRechargeAt: number;
+    dayKey?: string;
     bestScore: number;
     playsCount: number;
   }>;

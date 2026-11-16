@@ -10,6 +10,8 @@ interface CaseStage3DProps {
   caseBox: CaseBox;
   isOpeningLid: boolean;
   entryKey: number;
+  paused?: boolean;
+  lightweight?: boolean;
 }
 
 // Locked-off fixed CS2 inspection camera framed cleanly so the full 90° open lid + volumetric glow stay unclipped
@@ -76,9 +78,17 @@ function easeInOutCubic(x: number): number {
   return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 }
 
-export const CaseStage3D: React.FC<CaseStage3DProps> = ({ caseBox, isOpeningLid, entryKey }) => {
+export const CaseStage3D: React.FC<CaseStage3DProps> = ({
+  caseBox,
+  isOpeningLid,
+  entryKey,
+  paused = false,
+  lightweight = false,
+}) => {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const openingLidRef = useRef(isOpeningLid);
+  const pausedRef = useRef(paused);
+  const resumeRef = useRef<(() => void) | null>(null);
   const openingStartedAtRef = useRef<number | null>(isOpeningLid ? performance.now() : null);
   const pointerTiltRef = useRef({ targetRotY: SETTLED_ROT_Y, targetRotX: SETTLED_ROT_X, dragging: false, lastX: 0 });
   const [webglUnavailable, setWebglUnavailable] = useState(false);
@@ -95,10 +105,18 @@ export const CaseStage3D: React.FC<CaseStage3DProps> = ({ caseBox, isOpeningLid,
   }, [isOpeningLid]);
 
   useEffect(() => {
+    pausedRef.current = paused;
+    if (!paused) {
+      resumeRef.current?.();
+    }
+  }, [paused]);
+
+  useEffect(() => {
     const container = mountRef.current;
     if (!container) return;
 
     const isSoftwareGl = detectSoftwareWebGL();
+    const skipShadows = isSoftwareGl || lightweight;
     let renderer: THREE.WebGLRenderer;
     try {
       renderer = new THREE.WebGLRenderer({
@@ -115,11 +133,11 @@ export const CaseStage3D: React.FC<CaseStage3DProps> = ({ caseBox, isOpeningLid,
     const height = Math.max(240, container.clientHeight);
 
     renderer.setSize(width, height);
-    renderer.setPixelRatio(isSoftwareGl ? 1 : Math.min(window.devicePixelRatio || 1, 2));
+    renderer.setPixelRatio(isSoftwareGl ? 1 : Math.min(window.devicePixelRatio || 1, lightweight ? 1.5 : 2));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.24;
-    renderer.shadowMap.enabled = !isSoftwareGl;
+    renderer.shadowMap.enabled = !skipShadows;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.domElement.style.display = 'block';
     renderer.domElement.style.width = '100%';
@@ -152,7 +170,7 @@ export const CaseStage3D: React.FC<CaseStage3DProps> = ({ caseBox, isOpeningLid,
 
     const keyLight = new THREE.DirectionalLight(0xfff1dc, 2.7);
     keyLight.position.set(3.4, 5.4, 3.8);
-    if (!isSoftwareGl) {
+    if (!skipShadows) {
       keyLight.castShadow = true;
       keyLight.shadow.mapSize.set(1024, 1024);
       keyLight.shadow.camera.near = 0.5;
@@ -199,7 +217,7 @@ export const CaseStage3D: React.FC<CaseStage3DProps> = ({ caseBox, isOpeningLid,
 
     // 3D Floor Impact Dust Particles (THREE.Points bursting outward upon impact)
     const particleTex = createSoftParticleTexture();
-    const DUST_COUNT = 56;
+    const DUST_COUNT = lightweight ? 24 : 56;
     const dustPositions = new Float32Array(DUST_COUNT * 3);
     const dustVel = new Float32Array(DUST_COUNT * 3);
     for (let i = 0; i < DUST_COUNT; i++) {
@@ -230,7 +248,7 @@ export const CaseStage3D: React.FC<CaseStage3DProps> = ({ caseBox, isOpeningLid,
     scene.add(dustPoints);
 
     // Floating Golden Dust Motes emerging from inside the opened CS2 case
-    const MOTE_COUNT = 52;
+    const MOTE_COUNT = lightweight ? 22 : 52;
     const motePositions = new Float32Array(MOTE_COUNT * 3);
     const moteSeeds = new Float32Array(MOTE_COUNT * 2);
     for (let i = 0; i < MOTE_COUNT; i++) {
@@ -333,8 +351,26 @@ export const CaseStage3D: React.FC<CaseStage3DProps> = ({ caseBox, isOpeningLid,
       frameId = window.setTimeout(poll, 4);
     };
 
+    let loopActive = false;
+
+    const scheduleNext = () => {
+      if (disposed || pausedRef.current) {
+        loopActive = false;
+        return;
+      }
+      loopActive = true;
+      if (isSoftwareGl) {
+        afterDraw(tick);
+      } else {
+        frameId = requestAnimationFrame(tick);
+      }
+    };
+
     const tick = () => {
-      if (disposed) return;
+      if (disposed || pausedRef.current) {
+        loopActive = false;
+        return;
+      }
       const now = performance.now();
       // Frame 0 compiles shaders on first draw; start the physical drop timer at Frame 1
       if (frameCount <= 1) {
@@ -501,17 +537,26 @@ export const CaseStage3D: React.FC<CaseStage3DProps> = ({ caseBox, isOpeningLid,
       // Camera stays 100% locked-off static
       renderer.render(scene, camera);
 
-      if (isSoftwareGl) {
-        afterDraw(tick);
-      } else {
+      scheduleNext();
+    };
+
+    resumeRef.current = () => {
+      if (!disposed && !loopActive && !pausedRef.current) {
+        lastTime = performance.now();
+        loopActive = true;
         frameId = requestAnimationFrame(tick);
       }
     };
 
-    frameId = requestAnimationFrame(tick);
+    if (!pausedRef.current) {
+      loopActive = true;
+      frameId = requestAnimationFrame(tick);
+    }
 
     return () => {
       disposed = true;
+      loopActive = false;
+      resumeRef.current = null;
       cancelAnimationFrame(frameId);
       clearTimeout(frameId);
       window.removeEventListener('resize', handleResize);

@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { ArrowLeft, Car, Clock, Coins, Gamepad2, ShieldAlert, Sparkles, X } from 'lucide-react';
+import ptuTrapThumb from '../assets/images/ptu_trap_sprite_1794862141403.jpg';
+import tenetRiderCover from '../assets/images/tenet_rider_cover_1794862143521.jpg';
 import type { MinesBoardState, MinigameEnergySlot, MinigameId, MinigameStatusMap } from '../types';
 import { formatTC } from '../utils/economics';
 import { PtuMinesGame } from './minigames/PtuMinesGame';
@@ -23,6 +25,7 @@ interface EarnGamesModalProps {
     sessionId: string,
     coinsCollected: number,
     distanceMeters: number,
+    nearMisses: number,
     survived: boolean
   ) => Promise<{ reward: number; bestScore: number }>;
 }
@@ -55,26 +58,27 @@ const GAMES_CATALOG: {
     id: 'mines',
     title: 'Минное поле ПТУ',
     meta: 'PvE-сапёр 4×4 · 3 ловушки · до 1 100 TC',
-    description: 'Бесплатный вход: открывай безопасные клетки и забирай банк в любой момент.',
-    imageUrl: '/assets/cards/drunk_artemiy.png',
+    description: 'Бесплатный вход: открывай сейфы с монетами и забирай банк в любой момент.',
+    imageUrl: ptuTrapThumb,
     fallbackIcon: 'mines',
   },
   {
     id: 'race',
     title: 'Гонка на TENET T4',
-    meta: '3-полосный заезд · 25 сек · до 500 TC',
-    description: 'Объезжай ямы, собирай золотые монеты TC и доберись до финиша за бонусом.',
-    imageUrl: '/assets/cards/tenet_t4.png',
+    meta: '3D Traffic Rider · 4 полосы · до 600 TC',
+    description: 'Управляй 3D TENET T4: жми Газ/Нитро, тормози перед потоком, делай плотные обгоны (+15 TC)!',
+    imageUrl: tenetRiderCover,
     fallbackIcon: 'race',
   },
 ];
 
-function formatCountdown(nextRechargeAt: number | null, nowMs: number): string | null {
+function formatDailyCountdown(nextRechargeAt: number | null, nowMs: number): string | null {
   if (!nextRechargeAt || nextRechargeAt <= nowMs) return null;
   const totalSec = Math.ceil((nextRechargeAt - nowMs) / 1000);
-  const mins = Math.floor(totalSec / 60);
+  const hours = Math.floor(totalSec / 3600);
+  const mins = Math.floor((totalSec % 3600) / 60);
   const secs = totalSec % 60;
-  return `${mins}:${secs.toString().padStart(2, '0')}`;
+  return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
 }
 
 export const EarnGamesModal: React.FC<EarnGamesModalProps> = ({
@@ -119,7 +123,9 @@ export const EarnGamesModal: React.FC<EarnGamesModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-3 sm:p-4 backdrop-blur-sm overflow-y-auto"
+      className={`fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto ${
+        selectedGame === 'race' ? 'bg-black/85' : 'bg-black/80 backdrop-blur-sm'
+      }`}
       role="dialog"
       aria-modal="true"
       aria-labelledby="earn-games-modal-title"
@@ -183,7 +189,7 @@ export const EarnGamesModal: React.FC<EarnGamesModalProps> = ({
             <div className="grid grid-cols-1 gap-3">
               {GAMES_CATALOG.map((game) => {
                 const slot = getSlot(game.id);
-                const countdown = slot.charges < slot.maxCharges ? formatCountdown(slot.nextRechargeAt, nowMs) : null;
+                const countdown = slot.charges < slot.maxCharges ? formatDailyCountdown(slot.nextRechargeAt, nowMs) : null;
 
                 return (
                   <div
@@ -198,7 +204,7 @@ export const EarnGamesModal: React.FC<EarnGamesModalProps> = ({
                             alt={game.title}
                             referrerPolicy="no-referrer"
                             onError={() => setBrokenThumbs((prev) => ({ ...prev, [game.id]: true }))}
-                            className={`h-full w-full ${game.id === 'race' ? 'object-contain p-1.5' : 'object-cover'}`}
+                            className="h-full w-full object-cover"
                           />
                         ) : game.fallbackIcon === 'mines' ? (
                           <ShieldAlert className="h-6 w-6 text-rose-400" />
@@ -227,11 +233,11 @@ export const EarnGamesModal: React.FC<EarnGamesModalProps> = ({
                                 />
                               ))}
                             </span>
-                            {slot.charges}/{slot.maxCharges}
+                            {slot.charges}/{slot.maxCharges} сегодня
                           </span>
                           {countdown && (
                             <span className="inline-flex items-center gap-1 text-slate-300">
-                              <Clock className="h-3 w-3" />+{countdown}
+                              <Clock className="h-3 w-3" />Обновление через {countdown}
                             </span>
                           )}
                           {slot.bestScore > 0 && (
@@ -256,7 +262,7 @@ export const EarnGamesModal: React.FC<EarnGamesModalProps> = ({
             </div>
 
             <p className="text-[11px] text-center text-slate-500 font-mono-num">
-              Попытки восстанавливаются автоматически: +1 каждые 3 минуты для каждой игры
+              Максимум 3 попытки в день на каждую игру · сброс ежедневно в 00:00 МСК
             </p>
           </div>
         )}

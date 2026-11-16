@@ -49,6 +49,7 @@ export default function App() {
   const [friendInviteNotice, setFriendInviteNotice] = useState('');
   const [realtimeNotice, setRealtimeNotice] = useState<{ text: string; tab: AppTab } | null>(null);
   const [hasUnreadNotice, setHasUnreadNotice] = useState(false);
+  const [battleSyncKey, setBattleSyncKey] = useState(0);
   const handledInviteCode = useRef('');
   const noticeTimer = useRef<number | null>(null);
   const activeTabRef = useRef(activeTab);
@@ -163,16 +164,21 @@ export default function App() {
       if (stopped) return;
       socket = new WebSocket(`${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`);
       socket.onmessage = (event) => {
-        let message: { type?: string; username?: string } = {};
+        let message: { type?: string; username?: string; fromUsername?: string } = {};
         try { message = JSON.parse(event.data); } catch { return; }
+        const sender = message.fromUsername ?? message.username ?? 'Игрок';
         const noticeTypes: Record<string, { text: string; tab: AppTab }> = {
-          friend_request: { text: `${message.username ?? 'Игрок'} отправил запрос в друзья`, tab: 'profile' },
-          friend_request_accepted: { text: `${message.username ?? 'Игрок'} принял запрос в друзья`, tab: 'profile' },
-          battle_invitation: { text: `${message.username ?? 'Друг'} приглашает тебя в батл`, tab: 'battles' },
-          battle_invitation_accepted: { text: `${message.username ?? 'Игрок'} принял приглашение в батл`, tab: 'battles' },
-          battle_invitation_declined: { text: `${message.username ?? 'Игрок'} отклонил приглашение в батл`, tab: 'battles' },
+          friend_request: { text: `${sender} отправил запрос в друзья`, tab: 'profile' },
+          friend_request_accepted: { text: `${sender} принял запрос в друзья`, tab: 'profile' },
+          battle_invitation: { text: `${sender} приглашает тебя в батл`, tab: 'battles' },
+          battle_invitation_accepted: { text: `${sender} принял приглашение в батл`, tab: 'battles' },
+          battle_invitation_declined: { text: `${sender} отклонил приглашение в батл`, tab: 'battles' },
           battle_invitation_expired: { text: 'Приглашение в батл устарело: комната уже занята', tab: 'battles' },
+          battle_started: { text: `${sender} вступил в батл — раунды запущены!`, tab: 'battles' },
         };
+        if (message.type && message.type.startsWith('battle_')) {
+          setBattleSyncKey((prev) => prev + 1);
+        }
         if (message.type && noticeTypes[message.type]) {
           setRealtimeNotice(noticeTypes[message.type]);
           setHasUnreadNotice(true);
@@ -340,13 +346,14 @@ export default function App() {
     sessionId: string,
     coinsCollected: number,
     distanceMeters: number,
+    nearMisses: number,
     survived: boolean
   ) => {
     const res = await apiJson<{ reward: number; bestScore: number; payload: BootstrapPayload }>(
       '/api/minigames/race/finish',
       {
         method: 'POST',
-        body: JSON.stringify({ sessionId, coinsCollected, distanceMeters, survived }),
+        body: JSON.stringify({ sessionId, coinsCollected, distanceMeters, nearMisses, survived }),
       }
     );
     setPayload(res.payload);
@@ -484,12 +491,16 @@ export default function App() {
   };
 
   const handleAddFriend = async (code: string) => {
-    const res = await apiJson<{ payload: BootstrapPayload; requestSent?: boolean }>('/api/friends', {
+    const res = await apiJson<{
+      payload: BootstrapPayload;
+      requestSent?: boolean;
+      requestAccepted?: boolean;
+    }>('/api/friends', {
       method: 'POST',
       body: JSON.stringify({ code }),
     });
     setPayload(res.payload);
-    return res.payload;
+    return { payload: res.payload, autoAccepted: Boolean(res.requestAccepted) };
   };
 
   const handleFriendRequest = async (id: string, accept: boolean) => {
@@ -519,8 +530,22 @@ export default function App() {
     if (!code || handledInviteCode.current === code) return;
     handledInviteCode.current = code;
     void handleAddFriend(code)
-      .then(() => setFriendInviteNotice('Запрос отправлен. Он появится в друзьях после согласия получателя.'))
-      .catch((error: unknown) => setFriendInviteNotice(error instanceof Error ? error.message : 'Не удалось отправить запрос.'))
+      .then(({ autoAccepted }) => {
+        const msg = autoAccepted
+          ? 'Вы стали друзьями! Можно звать друг друга в батлы.'
+          : 'Запрос отправлен. Он появится в друзьях после согласия получателя.';
+        setFriendInviteNotice(msg);
+        setRealtimeNotice({ text: msg, tab: 'profile' });
+        if (noticeTimer.current !== null) window.clearTimeout(noticeTimer.current);
+        noticeTimer.current = window.setTimeout(() => setRealtimeNotice(null), 6500);
+      })
+      .catch((error: unknown) => {
+        const errMsg = error instanceof Error ? error.message : 'Не удалось отправить запрос.';
+        setFriendInviteNotice(errMsg);
+        setRealtimeNotice({ text: errMsg, tab: 'profile' });
+        if (noticeTimer.current !== null) window.clearTimeout(noticeTimer.current);
+        noticeTimer.current = window.setTimeout(() => setRealtimeNotice(null), 6500);
+      })
       .finally(() => {
         const url = new URL(window.location.href);
         url.searchParams.delete('friend');
@@ -609,6 +634,8 @@ export default function App() {
         onLogout={handleLogout}
         muted={muted}
         onToggleMute={handleToggleMute}
+        pendingFriendRequests={payload.friendRequestsReceived.length}
+        pendingBattleInvites={payload.battleInvitations.length}
       />
 
       <div className="flex min-h-0 flex-1">
@@ -668,10 +695,12 @@ export default function App() {
               friends={payload.friends}
               invitations={payload.battleInvitations}
               isAuthorized={isAuthorized}
+              battleSyncKey={battleSyncKey}
               onOpenTelegramLogin={() => setTelegramLoginOpen(true)}
               onEnableNotifications={enableNotifications}
               onSellItems={handleSellItems}
               onPayload={setPayload}
+              onRefreshPayload={refreshPayload}
             />
           )}
 
@@ -732,7 +761,7 @@ export default function App() {
         <button type="button" onClick={() => { navigateToTab(realtimeNotice.tab); setRealtimeNotice(null); setHasUnreadNotice(false); }} className="whitespace-nowrap rounded-lg bg-amber-400 px-3 py-2 text-xs font-bold text-slate-950">Открыть</button>
         <button type="button" onClick={() => setRealtimeNotice(null)} aria-label="Закрыть уведомление" className="text-slate-500">×</button>
       </div>}
-      {!realtimeNotice && hasUnreadNotice && <button type="button" onClick={() => setHasUnreadNotice(false)} title="Есть непрочитанное сообщение" aria-label="Есть непрочитанное сообщение" className="fixed bottom-5 right-5 z-50 h-4 w-4 rounded-full bg-amber-300 shadow-[0_0_14px_rgba(250,204,21,.8)] animate-pulse"><span className="sr-only">Новое сообщение</span></button>}
+      {!realtimeNotice && hasUnreadNotice && <button type="button" onClick={() => setHasUnreadNotice(false)} title="Есть непрочитанное сообщение" aria-label="Есть непрочитанное сообщение" className="fixed bottom-5 right-5 z-50 h-4 w-4 rounded-full bg-amber-300 shadow-[0_0_12px_rgba(250,204,21,0.55)] cursor-pointer"><span className="sr-only">Новое сообщение</span></button>}
 
       <TelegramLoginModal
         isOpen={telegramLoginOpen}

@@ -53,6 +53,11 @@ import {
   createEmptyAchievementStats,
   evaluateAchievements,
 } from './src/utils/achievements.ts';
+import {
+  DAILY_MINIGAME_MAX_CHARGES,
+  buildMinigameStatusMap,
+  syncDailyMinigameEnergy,
+} from './src/utils/minigameRules.ts';
 
 const PORT = Number(process.env.PORT) || 3000;
 const DATA_DIR = path.resolve(process.cwd(), 'data');
@@ -123,69 +128,17 @@ interface PersistedBattleRoom {
 
 const socketsByUser = new Map<string, Set<WebSocket>>();
 
-const MINIGAME_MAX_CHARGES = 3;
-const MINIGAME_RECHARGE_MS = 180_000; // +1 ticket every 3 minutes
+const MINIGAME_MAX_CHARGES = DAILY_MINIGAME_MAX_CHARGES;
 const MINES_GRID_SIZE = 16;
 const MINES_TRAP_COUNT = 3;
 const MINES_STEP_BONUSES = [30, 35, 40, 50, 60, 75, 95, 115, 130, 140, 150, 160, 180];
 
-function createDefaultMinigameEnergy(now = Date.now()): NonNullable<UserProfile['minigameEnergy']> {
-  return {
-    harvest: { charges: MINIGAME_MAX_CHARGES, lastRechargeAt: now, bestScore: 0, playsCount: 0 },
-    mines: { charges: MINIGAME_MAX_CHARGES, lastRechargeAt: now, bestScore: 0, playsCount: 0 },
-    race: { charges: MINIGAME_MAX_CHARGES, lastRechargeAt: now, bestScore: 0, playsCount: 0 },
-  };
-}
-
 function syncMinigameEnergy(user: UserProfile, now = Date.now()): NonNullable<UserProfile['minigameEnergy']> {
-  if (!user.minigameEnergy) {
-    user.minigameEnergy = createDefaultMinigameEnergy(now);
-  }
-  const games: MinigameId[] = ['harvest', 'mines', 'race'];
-  for (const game of games) {
-    const slot = user.minigameEnergy[game] ?? {
-      charges: MINIGAME_MAX_CHARGES,
-      lastRechargeAt: now,
-      bestScore: 0,
-      playsCount: 0,
-    };
-    slot.charges = Math.max(0, Math.min(MINIGAME_MAX_CHARGES, Math.floor(Number(slot.charges) || 0)));
-    slot.lastRechargeAt = Number.isFinite(slot.lastRechargeAt) && slot.lastRechargeAt > 0 ? slot.lastRechargeAt : now;
-    slot.bestScore = Math.max(0, Math.floor(Number(slot.bestScore) || 0));
-    slot.playsCount = Math.max(0, Math.floor(Number(slot.playsCount) || 0));
-
-    if (slot.charges < MINIGAME_MAX_CHARGES) {
-      const elapsed = Math.max(0, now - slot.lastRechargeAt);
-      const gained = Math.floor(elapsed / MINIGAME_RECHARGE_MS);
-      if (gained > 0) {
-        slot.charges = Math.min(MINIGAME_MAX_CHARGES, slot.charges + gained);
-        slot.lastRechargeAt = slot.charges >= MINIGAME_MAX_CHARGES
-          ? now
-          : slot.lastRechargeAt + gained * MINIGAME_RECHARGE_MS;
-      }
-    } else {
-      slot.lastRechargeAt = now;
-    }
-    user.minigameEnergy[game] = slot;
-  }
-  return user.minigameEnergy;
+  return syncDailyMinigameEnergy(user, now);
 }
 
 function getMinigameStatusMap(user?: UserProfile, now = Date.now()): MinigameStatusMap {
-  const games: MinigameId[] = ['harvest', 'mines', 'race'];
-  const energy = user ? syncMinigameEnergy(user, now) : createDefaultMinigameEnergy(now);
-  const result = {} as MinigameStatusMap;
-  for (const game of games) {
-    const slot = energy[game];
-    result[game] = {
-      charges: slot.charges,
-      maxCharges: MINIGAME_MAX_CHARGES,
-      nextRechargeAt: slot.charges < MINIGAME_MAX_CHARGES ? slot.lastRechargeAt + MINIGAME_RECHARGE_MS : null,
-      bestScore: slot.bestScore,
-      playsCount: slot.playsCount,
-    };
-  }
-  return result;
+  return buildMinigameStatusMap(user, now);
 }
 
 function publicMinesBoard(session: PersistedMinigameSession): MinesBoardState {
@@ -1590,16 +1543,27 @@ function buildPayload(userId?: string, authenticated = Boolean(userId)): Bootstr
     : [];
   const battleInvitations: BattleInvitationSummary[] = authenticated
     ? db.battleInvitations
-        .filter((invite) => invite.toUserId === user.id && invite.status === 'pending')
-        .map((invite) => ({
-          id: invite.id,
-          roomId: invite.roomId,
-          fromUsername: db.users.find((candidate) => candidate.id === invite.fromUserId)?.username ?? 'Игрок',
-          mode: db.battles.find((battle) => battle.id === invite.roomId)?.mode ?? 'upgrade',
-          caseId: db.battles.find((battle) => battle.id === invite.roomId)?.caseId,
-          caseCount: db.battles.find((battle) => battle.id === invite.roomId)?.caseCount,
-          createdAt: invite.createdAt,
-        }))
+        .filter((invite) => {
+          if (invite.toUserId !== user.id || invite.status !== 'pending') return false;
+          const room = db.battles.find((battle) => battle.id === invite.roomId);
+          if (!room || room.status !== 'waiting' || room.hostUserId === user.id) {
+            invite.status = 'declined';
+            return false;
+          }
+          return true;
+        })
+        .map((invite) => {
+          const room = db.battles.find((battle) => battle.id === invite.roomId)!;
+          return {
+            id: invite.id,
+            roomId: invite.roomId,
+            fromUsername: db.users.find((candidate) => candidate.id === invite.fromUserId)?.username ?? 'Игрок',
+            mode: room.mode,
+            caseId: room.caseId,
+            caseCount: room.caseCount,
+            createdAt: invite.createdAt,
+          };
+        })
     : [];
   return {
     user,
@@ -1964,8 +1928,22 @@ async function startServer() {
       res.status(409).json({ error: 'Запрос этому пользователю уже отправлен.' });
       return;
     }
-    if (db.friendRequests.some((request) => request.fromUserId === friend.id && request.toUserId === user.id)) {
-      res.status(409).json({ error: 'Этот пользователь уже отправил вам запрос. Примите его в разделе «Друзья».' });
+    const reverseRequest = db.friendRequests.find(
+      (request) => request.fromUserId === friend.id && request.toUserId === user.id
+    );
+    if (reverseRequest) {
+      if (!user.friends.includes(friend.id)) user.friends.push(friend.id);
+      if (!friend.friends.includes(user.id)) friend.friends.push(user.id);
+      db.friendRequests = db.friendRequests.filter(
+        (entry) =>
+          !(entry.fromUserId === friend.id && entry.toUserId === user.id) &&
+          !(entry.fromUserId === user.id && entry.toUserId === friend.id)
+      );
+      syncUserAchievements(user);
+      syncUserAchievements(friend);
+      saveDb();
+      sendRealtimeToUser(friend.id, { type: 'friend_request_accepted', username: user.username });
+      res.json({ payload: buildPayload(user.id), requestAccepted: true });
       return;
     }
     const request: PersistedFriendRequest = { id: uid('friend_request'), fromUserId: user.id, toUserId: friend.id, createdAt: Date.now() };
@@ -2397,15 +2375,29 @@ async function startServer() {
     if (!room || room.hostUserId !== user.id || room.status !== 'waiting' || !friend || !user.friends.includes(friend.id)) { res.status(400).json({ error: 'Пригласить можно только друга в свою свободную комнату.' }); return; }
     if (db.battleInvitations.some((entry) => entry.roomId === room.id && entry.toUserId === friend.id && entry.status === 'pending')) { res.status(400).json({ error: 'Приглашение уже отправлено.' }); return; }
     const invite: PersistedBattleInvitation = { id: uid('invite'), roomId: room.id, fromUserId: user.id, toUserId: friend.id, status: 'pending', createdAt: Date.now() };
-    db.battleInvitations.unshift(invite); saveDb(); sendRealtimeToUser(friend.id, { type: 'battle_invitation', inviteId: invite.id, roomId: room.id, fromUsername: user.username }); res.json({ ok: true });
+    db.battleInvitations.unshift(invite); saveDb();
+    sendRealtimeToUser(friend.id, { type: 'battle_invitation', inviteId: invite.id, roomId: room.id, fromUsername: user.username, username: user.username });
+    res.json({ ok: true, inviteId: invite.id });
   });
 
   app.post('/api/battle-invitations/:id/accept', (req, res) => {
     const user = authenticatedUser(req, res); if (!user) return;
     const invite = db.battleInvitations.find((entry) => entry.id === req.params.id && entry.toUserId === user.id && entry.status === 'pending');
-    const room = invite && db.battles.find((entry) => entry.id === invite.roomId);
-    if (!invite || !room) { res.status(404).json({ error: 'Приглашение устарело.' }); return; }
-    try { joinBattle(user, room, '', Array.isArray(req.body.stakeItemIds) ? req.body.stakeItemIds : [], true); invite.status = 'accepted'; saveDb(); sendRealtimeToUser(invite.fromUserId, { type: 'battle_invitation_accepted', roomId: room.id, username: user.username }); res.json({ payload: buildPayload(user.id), battle: publicBattle(room, user.id) }); }
+    if (!invite) { res.status(404).json({ error: 'Приглашение уже неактуально.', payload: buildPayload(user.id) }); return; }
+    const room = db.battles.find((entry) => entry.id === invite.roomId);
+    if (!room || room.status !== 'waiting') {
+      invite.status = 'declined';
+      saveDb();
+      res.status(409).json({ error: 'Комната уже занята или отменена — приглашение удалено.', payload: buildPayload(user.id) });
+      return;
+    }
+    try {
+      joinBattle(user, room, '', Array.isArray(req.body.stakeItemIds) ? req.body.stakeItemIds : [], true);
+      invite.status = 'accepted';
+      saveDb();
+      sendRealtimeToUser(invite.fromUserId, { type: 'battle_invitation_accepted', roomId: room.id, username: user.username });
+      res.json({ payload: buildPayload(user.id), battle: publicBattle(room, user.id) });
+    }
     catch (error) { res.status(400).json({ error: error instanceof Error ? error.message : 'Не удалось принять приглашение.' }); }
   });
 
@@ -2427,11 +2419,11 @@ async function startServer() {
     const energy = syncMinigameEnergy(user, now);
     const slot = energy.harvest;
     if (slot.charges <= 0) {
-      res.status(400).json({ error: 'Заряды для «Урожая на Ферме» закончились. Подожди восстановления или сыграй в другую игру.' });
+      res.status(400).json({ error: 'Дневной лимит (3 попытки в день) исчерпан. Попробуй снова после 00:00 МСК!' });
       return;
     }
 
-    if (slot.charges === MINIGAME_MAX_CHARGES) slot.lastRechargeAt = now;
+    slot.lastRechargeAt = now;
     slot.charges -= 1;
     slot.playsCount += 1;
 
@@ -2506,10 +2498,10 @@ async function startServer() {
     const energy = syncMinigameEnergy(user, now);
     const slot = energy.mines;
     if (slot.charges <= 0) {
-      res.status(400).json({ error: 'Заряды для «Минного поля ПТУ» закончились. Подожди восстановления!' });
+      res.status(400).json({ error: 'Дневной лимит (3 попытки в день) исчерпан. Попробуй снова после 00:00 МСК!' });
       return;
     }
-    if (slot.charges === MINIGAME_MAX_CHARGES) slot.lastRechargeAt = now;
+    slot.lastRechargeAt = now;
     slot.charges -= 1;
     slot.playsCount += 1;
 
@@ -2618,10 +2610,10 @@ async function startServer() {
     const energy = syncMinigameEnergy(user, now);
     const slot = energy.race;
     if (slot.charges <= 0) {
-      res.status(400).json({ error: 'Топливо для «Гонки на TENET T4» закончилось. Подожди восстановления!' });
+      res.status(400).json({ error: 'Дневной лимит (3 попытки в день) исчерпан. Попробуй снова после 00:00 МСК!' });
       return;
     }
-    if (slot.charges === MINIGAME_MAX_CHARGES) slot.lastRechargeAt = now;
+    slot.lastRechargeAt = now;
     slot.charges -= 1;
     slot.playsCount += 1;
 
@@ -2644,10 +2636,11 @@ async function startServer() {
   app.post('/api/minigames/race/finish', (req, res) => {
     const user = authenticatedUser(req, res);
     if (!user) return;
-    const { sessionId, coinsCollected, distanceMeters, survived } = req.body as {
+    const { sessionId, coinsCollected, distanceMeters, nearMisses, survived } = req.body as {
       sessionId?: string;
       coinsCollected?: number;
       distanceMeters?: number;
+      nearMisses?: number;
       survived?: boolean;
     };
     const now = Date.now();
@@ -2668,12 +2661,14 @@ async function startServer() {
     const elapsedMs = now - session.startedAt;
     const maxPlausibleCoins = Math.min(18, Math.floor(elapsedMs / 900) + 1);
     const cleanCoins = Math.max(0, Math.min(maxPlausibleCoins, Math.floor(Number(coinsCollected) || 0)));
-    const cleanDist = Math.max(0, Math.min(1800, Math.floor(Number(distanceMeters) || 0)));
+    const cleanNearMisses = Math.max(0, Math.min(20, Math.floor(Number(nearMisses) || 0)));
+    const cleanDist = Math.max(0, Math.min(2500, Math.floor(Number(distanceMeters) || 0)));
     const isSurvived = Boolean(survived) && elapsedMs >= 20_000;
 
     const coinsReward = cleanCoins * 20;
-    const distanceBonus = isSurvived ? 120 : Math.min(80, Math.floor(cleanDist / 14));
-    const reward = Math.max(0, Math.min(500, coinsReward + distanceBonus));
+    const overtakeReward = cleanNearMisses * 15;
+    const distanceBonus = isSurvived ? 120 : Math.min(80, Math.floor(cleanDist / 16));
+    const reward = Math.max(0, Math.min(600, coinsReward + overtakeReward + distanceBonus));
 
     session.status = 'completed';
     const energy = syncMinigameEnergy(user, now);

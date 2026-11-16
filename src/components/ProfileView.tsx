@@ -37,7 +37,7 @@ interface ProfileViewProps {
   onOpenTelegramLogin: () => void;
   onSellItems: (instanceIds: string[]) => Promise<void>;
   onGoToUpgrade: () => void;
-  onAddFriend: (code: string) => Promise<BootstrapPayload>;
+  onAddFriend: (code: string) => Promise<{ autoAccepted?: boolean; payload?: BootstrapPayload } | BootstrapPayload>;
   onAcceptFriendRequest: (id: string) => Promise<void>;
   onDeclineFriendRequest: (id: string) => Promise<void>;
   onRemoveFriend: (friendId: string) => Promise<void>;
@@ -174,6 +174,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const [friendCodeInput, setFriendCodeInput] = useState('');
   const [friendMessage, setFriendMessage] = useState('');
   const [friendLoading, setFriendLoading] = useState(false);
+  const [processingRequestId, setProcessingRequestId] = useState<string | null>(null);
   const [selectedFriend, setSelectedFriend] = useState<FriendProfile | null>(null);
 
   const itemsMap = useMemo(() => new Map(items.map((it) => [it.id, it])), [items]);
@@ -292,12 +293,20 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
 
   const handleAddFriend = async (event: React.FormEvent) => {
     event.preventDefault();
+    if (friendLoading) return;
     setFriendLoading(true);
     setFriendMessage('');
     try {
-      await onAddFriend(friendCodeInput);
+      const result = await onAddFriend(friendCodeInput);
+      const autoAccepted = Boolean(
+        result && typeof result === 'object' && 'autoAccepted' in result && result.autoAccepted
+      );
       setFriendCodeInput('');
-      setFriendMessage('Запрос отправлен. Друг появится в списке после согласия.');
+      setFriendMessage(
+        autoAccepted
+          ? 'У вас был встречный запрос — вы теперь друзья!'
+          : 'Запрос отправлен. Друг появится в списке после согласия.'
+      );
     } catch (error) {
       setFriendMessage(error instanceof Error ? error.message : 'Не удалось добавить друга.');
     } finally {
@@ -306,6 +315,8 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   };
 
   const handleFriendRequestChoice = async (id: string, accept: boolean) => {
+    if (processingRequestId) return;
+    setProcessingRequestId(id);
     setFriendLoading(true);
     try {
       if (accept) await onAcceptFriendRequest(id);
@@ -314,6 +325,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     } catch (error) {
       setFriendMessage(error instanceof Error ? error.message : 'Не удалось обработать запрос.');
     } finally {
+      setProcessingRequestId(null);
       setFriendLoading(false);
     }
   };
@@ -746,8 +758,8 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             <div className="text-[11px] font-bold text-amber-200">Входящие запросы ({friendRequestsReceived.length})</div>
             {friendRequestsReceived.map((request) => <div key={request.id} className="flex items-center gap-2 text-xs">
               <span className="min-w-0 flex-1 truncate text-white">{request.fromTelegramUsername ? `@${request.fromTelegramUsername}` : request.fromUsername}</span>
-              <button type="button" disabled={friendLoading} onClick={() => void handleFriendRequestChoice(request.id, true)} className="rounded-lg bg-emerald-500/15 px-2 py-1 font-semibold text-emerald-300 disabled:opacity-40">Принять</button>
-              <button type="button" disabled={friendLoading} onClick={() => void handleFriendRequestChoice(request.id, false)} className="rounded-lg bg-rose-500/10 px-2 py-1 font-semibold text-rose-300 disabled:opacity-40">Отклонить</button>
+              <button type="button" disabled={friendLoading || processingRequestId === request.id} onClick={() => void handleFriendRequestChoice(request.id, true)} className="rounded-lg bg-emerald-500/15 px-2.5 py-1 font-semibold text-emerald-300 disabled:opacity-40 cursor-pointer">Принять</button>
+              <button type="button" disabled={friendLoading || processingRequestId === request.id} onClick={() => void handleFriendRequestChoice(request.id, false)} className="rounded-lg bg-rose-500/10 px-2.5 py-1 font-semibold text-rose-300 disabled:opacity-40 cursor-pointer">Отклонить</button>
             </div>)}
           </div>}
         </div>
