@@ -1,5 +1,5 @@
 import React, { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
-import type { AchievementId, AppTab, BootstrapPayload, FriendProfile, LiveDropEntry, MinesBoardState, Rarity, RollMode } from './types';
+import type { AchievementId, AppTab, BootstrapPayload, DurakRoomProjection, FriendProfile, LiveDropEntry, MinesBoardState, Rarity, RollMode } from './types';
 import { ACHIEVEMENT_DEFINITIONS, type AchievementProgress } from './utils/achievements';
 import type { CollectionSetReward } from './utils/collectionSets';
 import { soundFX } from './utils/sound';
@@ -19,6 +19,7 @@ const CasesView = lazy(() => import('./components/CasesView').then((m) => ({ def
 const BonusesView = lazy(() => import('./components/BonusesView').then((m) => ({ default: m.BonusesView })));
 const ProfileView = lazy(() => import('./components/ProfileView').then((m) => ({ default: m.ProfileView })));
 const BattlesView = lazy(() => import('./components/BattlesView').then((m) => ({ default: m.BattlesView })));
+const GamesView = lazy(() => import('./components/GamesView').then((m) => ({ default: m.GamesView })));
 
 async function apiJson<T>(url: string, options?: RequestInit): Promise<T> {
   const res = await fetch(url, {
@@ -50,6 +51,8 @@ export default function App() {
   const [realtimeNotice, setRealtimeNotice] = useState<{ text: string; tab: AppTab } | null>(null);
   const [hasUnreadNotice, setHasUnreadNotice] = useState(false);
   const [battleSyncKey, setBattleSyncKey] = useState(0);
+  const [durakSyncKey, setDurakSyncKey] = useState(0);
+  const [liveDurakRoom, setLiveDurakRoom] = useState<DurakRoomProjection | null>(null);
   const handledInviteCode = useRef('');
   const noticeTimer = useRef<number | null>(null);
   const lastNoticeTabRef = useRef<AppTab>('battles');
@@ -169,11 +172,12 @@ export default function App() {
         if (hasConnectedBefore) {
           void refreshPayload();
           setBattleSyncKey((prev) => prev + 1);
+          setDurakSyncKey((prev) => prev + 1);
         }
         hasConnectedBefore = true;
       };
       socket.onmessage = (event) => {
-        let message: { type?: string; username?: string; fromUsername?: string } = {};
+        let message: { type?: string; username?: string; fromUsername?: string; room?: DurakRoomProjection } = {};
         try { message = JSON.parse(event.data); } catch { return; }
         const sender = message.fromUsername ?? message.username ?? 'Игрок';
         const noticeTypes: Record<string, { text: string; tab: AppTab }> = {
@@ -184,22 +188,37 @@ export default function App() {
           battle_invitation_declined: { text: `${sender} отклонил приглашение в батл`, tab: 'battles' },
           battle_invitation_expired: { text: 'Приглашение в батл устарело: комната уже занята', tab: 'battles' },
           battle_started: { text: `${sender} вступил в батл — раунды запущены!`, tab: 'battles' },
+          durak_invitation: { text: `${sender} зовёт тебя в «Дурака»`, tab: 'games' },
+          durak_invitation_accepted: { text: `${sender} сел за стол «Дурака»`, tab: 'games' },
+          durak_invitation_declined: { text: `${sender} отклонил приглашение в «Дурака»`, tab: 'games' },
+          durak_invitation_expired: { text: 'Приглашение в «Дурака» устарело', tab: 'games' },
+          durak_started: { text: 'Партия в «Дурака» началась — карты розданы!', tab: 'games' },
+          durak_table_cancelled: { text: `${sender} отменил стол «Дурака», ставка возвращена`, tab: 'games' },
         };
         if (message.type && message.type.startsWith('battle_')) {
           setBattleSyncKey((prev) => prev + 1);
         }
+        if (message.type && message.type.startsWith('durak_')) {
+          if (message.room) setLiveDurakRoom(message.room);
+          if (message.type === 'durak_table_cancelled') setLiveDurakRoom(null);
+          setDurakSyncKey((prev) => prev + 1);
+        }
         if (
           message.type === 'friend_removed' ||
           message.type === 'friend_request_declined' ||
-          message.type === 'battle_finished'
+          message.type === 'battle_finished' ||
+          message.type === 'durak_table_finished' ||
+          message.type === 'durak_table_cancelled'
         ) {
           void refreshPayload();
         }
         if (message.type && noticeTypes[message.type]) {
           const nextNotice = noticeTypes[message.type];
           const suppressInTabBanner =
-            (message.type === 'battle_started' || message.type === 'battle_invitation_accepted') &&
-            activeTabRef.current === 'battles';
+            ((message.type === 'battle_started' || message.type === 'battle_invitation_accepted') &&
+              activeTabRef.current === 'battles') ||
+            ((message.type === 'durak_started' || message.type === 'durak_invitation_accepted') &&
+              activeTabRef.current === 'games');
           if (!suppressInTabBanner) {
             lastNoticeTabRef.current = nextNotice.tab;
             setRealtimeNotice(nextNotice);
@@ -665,6 +684,7 @@ export default function App() {
         onToggleMute={handleToggleMute}
         pendingFriendRequests={payload.friendRequestsReceived.length}
         pendingBattleInvites={payload.battleInvitations.length}
+        pendingDurakInvites={(payload.durakInvitations ?? []).length}
       />
 
       <div className="flex min-h-0 flex-1">
@@ -728,6 +748,21 @@ export default function App() {
               onOpenTelegramLogin={() => setTelegramLoginOpen(true)}
               onEnableNotifications={enableNotifications}
               onSellItems={handleSellItems}
+              onPayload={setPayload}
+              onRefreshPayload={refreshPayload}
+            />
+          )}
+
+          {activeTab === 'games' && (
+            <GamesView
+              user={payload.user}
+              items={payload.items}
+              friends={payload.friends}
+              invitations={payload.durakInvitations ?? []}
+              isAuthorized={isAuthorized}
+              durakSyncKey={durakSyncKey}
+              liveDurakRoom={liveDurakRoom}
+              onOpenTelegramLogin={() => setTelegramLoginOpen(true)}
               onPayload={setPayload}
               onRefreshPayload={refreshPayload}
             />

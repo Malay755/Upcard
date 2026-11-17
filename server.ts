@@ -14,6 +14,8 @@ import type {
   BattleMode,
   BattleRoomSummary,
   CaseBox,
+  DurakInvitationSummary,
+  DurakMode,
   FriendRequestSummary,
   FriendProfile,
   FriendSummary,
@@ -58,6 +60,18 @@ import {
   buildMinigameStatusMap,
   syncDailyMinigameEnergy,
 } from './src/utils/minigameRules.ts';
+import { applyDurakDeckMetadata, buildDurak32Deck } from './src/utils/durakDeck.ts';
+import {
+  DURAK_TURN_TIMEOUT_MS,
+  DurakRuleError,
+  applyDurakAction,
+  forfeitDurakPlayer,
+  projectDurakRoomForUser,
+  resolveDurakTimeout,
+  startDurakGame,
+  type DurakActionPayload,
+  type DurakRoomState,
+} from './src/utils/durakEngine.ts';
 
 const DEFAULT_PORT = Number(process.env.PORT) || 3000;
 const DATA_DIR = process.env.CARDUP_DATA_DIR
@@ -76,6 +90,8 @@ interface DatabaseSchema {
   friendRequests: PersistedFriendRequest[];
   battleInvitations: PersistedBattleInvitation[];
   battles: PersistedBattleRoom[];
+  durakInvitations?: PersistedDurakInvitation[];
+  durakRooms?: PersistedDurakRoom[];
   minigameSessions?: PersistedMinigameSession[];
   sessionSecret?: string;
   revokedTokens?: string[];
@@ -83,6 +99,19 @@ interface DatabaseSchema {
   economyVersion?: number;
   catalogVersion?: number;
   consumedTelegramHashes?: { hash: string; expiresAt: number }[];
+}
+
+interface PersistedDurakInvitation {
+  id: string;
+  roomId: string;
+  fromUserId: string;
+  toUserId: string;
+  status: 'pending' | 'accepted' | 'declined';
+  createdAt: number;
+}
+
+interface PersistedDurakRoom extends DurakRoomState {
+  settled?: boolean;
 }
 
 interface PersistedMinigameSession {
@@ -130,6 +159,7 @@ interface PersistedBattleRoom {
 
 const socketsByUser = new Map<string, Set<WebSocket>>();
 const activeBattleTimers = new Set<NodeJS.Timeout>();
+const durakTurnTimers = new Map<string, NodeJS.Timeout>();
 
 const MINIGAME_MAX_CHARGES = DAILY_MINIGAME_MAX_CHARGES;
 const MINES_GRID_SIZE = 16;
@@ -876,7 +906,7 @@ function createInitialDb(): DatabaseSchema {
   ];
 
   return {
-    items,
+    items: applyDurakDeckMetadata(items),
     cases,
     // New databases start clean. Demo identities/drops must never be presented as real players.
     users: [],
@@ -886,6 +916,8 @@ function createInitialDb(): DatabaseSchema {
     friendRequests: [],
     battleInvitations: [],
     battles: [],
+    durakInvitations: [],
+    durakRooms: [],
     minigameSessions: [],
     catalogVersion: 8,
     economyVersion: 5,
@@ -1000,6 +1032,8 @@ function normalizeStoredDb(value: unknown): DatabaseSchema {
     friendRequests: Array.isArray(parsed.friendRequests) ? parsed.friendRequests : [],
     battleInvitations: Array.isArray(parsed.battleInvitations) ? parsed.battleInvitations : [],
     battles: Array.isArray(parsed.battles) ? parsed.battles : [],
+    durakInvitations: Array.isArray(parsed.durakInvitations) ? parsed.durakInvitations : [],
+    durakRooms: Array.isArray(parsed.durakRooms) ? parsed.durakRooms : [],
     minigameSessions: Array.isArray(parsed.minigameSessions)
       ? parsed.minigameSessions.filter((s) => s && s.expiresAt > Date.now() - 3600_000).slice(-200)
       : [],
@@ -1135,6 +1169,7 @@ function normalizeStoredDb(value: unknown): DatabaseSchema {
     }
     normalized.economyVersion = 5;
   }
+  normalized.items = applyDurakDeckMetadata(normalized.items);
   return normalized;
 }
 
@@ -1577,6 +1612,30 @@ function buildPayload(userId?: string, authenticated = Boolean(userId)): Bootstr
           };
         })
     : [];
+  const durakInvitations: DurakInvitationSummary[] = authenticated
+    ? (db.durakInvitations ?? [])
+        .filter((invite) => {
+          if (invite.toUserId !== user.id || invite.status !== 'pending') return false;
+          const room = (db.durakRooms ?? []).find((candidate) => candidate.id === invite.roomId);
+          if (!room || room.status !== 'waiting' || room.players.some((p) => p.userId === user.id)) {
+            invite.status = 'declined';
+            return false;
+          }
+          return true;
+        })
+        .map((invite) => {
+          const room = (db.durakRooms ?? []).find((candidate) => candidate.id === invite.roomId)!;
+          return {
+            id: invite.id,
+            roomId: invite.roomId,
+            fromUsername: db.users.find((candidate) => candidate.id === invite.fromUserId)?.username ?? 'Игрок',
+            mode: room.mode,
+            stake: room.stake,
+            maxPlayers: room.maxPlayers,
+            createdAt: invite.createdAt,
+          };
+        })
+    : [];
   return {
     user,
     users: authenticated ? [{
@@ -1594,6 +1653,7 @@ function buildPayload(userId?: string, authenticated = Boolean(userId)): Bootstr
     friends,
     friendRequestsReceived,
     battleInvitations,
+    durakInvitations,
     minigames: getMinigameStatusMap(authenticated ? user : undefined),
     authenticated,
   };
@@ -2039,6 +2099,16 @@ export async function startServer(options: ServerOptions = {}) {
       ) {
         invite.status = 'declined';
         sendRealtimeToUser(invite.toUserId, { type: 'battle_invitation_expired', roomId: invite.roomId });
+      }
+    }
+    for (const invite of db.durakInvitations ?? []) {
+      if (
+        invite.status === 'pending' &&
+        ((invite.fromUserId === user.id && invite.toUserId === friend.id) ||
+          (invite.fromUserId === friend.id && invite.toUserId === user.id))
+      ) {
+        invite.status = 'declined';
+        sendRealtimeToUser(invite.toUserId, { type: 'durak_invitation_expired', roomId: invite.roomId });
       }
     }
     saveDb();
@@ -2534,6 +2604,529 @@ export async function startServer(options: ServerOptions = {}) {
     const invite = db.battleInvitations.find((entry) => entry.id === req.params.id && entry.toUserId === user.id && entry.status === 'pending');
     if (!invite) { res.status(404).json({ error: 'Приглашение не найдено.' }); return; }
     invite.status = 'declined'; saveDb(); sendRealtimeToUser(invite.fromUserId, { type: 'battle_invitation_declined', username: user.username }); res.json({ payload: buildPayload(user.id) });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Online Durak (32-card deck: Подкидной & Переводной, server-authoritative)
+  // ---------------------------------------------------------------------------
+  const ALLOWED_DURAK_STAKES = new Set([0, 100, 250, 500, 1000]);
+
+  const clearDurakTurnTimer = (roomId: string) => {
+    const timer = durakTurnTimers.get(roomId);
+    if (timer) {
+      clearTimeout(timer);
+      durakTurnTimers.delete(roomId);
+    }
+  };
+
+  const sendDurakStateToParticipants = (room: PersistedDurakRoom, eventType = 'durak_state_updated') => {
+    for (const p of room.players) {
+      sendRealtimeToUser(p.userId, {
+        type: eventType,
+        roomId: room.id,
+        room: projectDurakRoomForUser(room, p.userId),
+      });
+    }
+  };
+
+  const settleCompletedDurakRoom = (room: PersistedDurakRoom) => {
+    if (room.status !== 'completed' || room.settled) return;
+    room.settled = true;
+    clearDurakTurnTimer(room.id);
+
+    if (room.pot > 0 && room.payoutPerWinner > 0) {
+      for (const winnerId of room.winnerUserIds) {
+        const winner = db.users.find((u) => u.id === winnerId);
+        if (winner) {
+          winner.balance += room.payoutPerWinner;
+          recordTx(
+            winner,
+            'durak_win',
+            room.payoutPerWinner,
+            room.isDraw
+              ? 'Ничья в «Дурак» (возврат ставки)'
+              : `Победа в «Дурак» (${room.mode === 'perevodnoy' ? 'Переводной' : 'Подкидной'})`
+          );
+        }
+      }
+      // Handle remainder of integer division for pot fairness
+      const remainder = room.pot - room.payoutPerWinner * room.winnerUserIds.length;
+      if (remainder > 0 && room.winnerUserIds.length > 0) {
+        const leadWinner = db.users.find((u) => u.id === room.winnerUserIds[0]);
+        if (leadWinner) {
+          leadWinner.balance += remainder;
+          recordTx(leadWinner, 'durak_win', remainder, 'Бонус остатка банка в «Дурак»');
+        }
+      }
+    }
+
+    sendDurakStateToParticipants(room, 'durak_table_finished');
+    sendRealtimeToAll({ type: 'durak_lobby_updated', roomId: room.id });
+  };
+
+  const scheduleDurakTurnTimer = (room: PersistedDurakRoom) => {
+    clearDurakTurnTimer(room.id);
+    if (room.status !== 'playing' || !room.turnDeadlineAt) return;
+    const delayMs = Math.max(150, room.turnDeadlineAt - Date.now());
+    const timer = setTimeout(() => {
+      durakTurnTimers.delete(room.id);
+      const targetRoom = (db.durakRooms ?? []).find((entry) => entry.id === room.id);
+      if (!targetRoom || targetRoom.status !== 'playing') return;
+      const changed = resolveDurakTimeout(targetRoom, Date.now());
+      if (changed) {
+        if ((targetRoom.status as string) === 'completed') {
+          settleCompletedDurakRoom(targetRoom);
+        } else {
+          scheduleDurakTurnTimer(targetRoom);
+        }
+        saveDb();
+        sendDurakStateToParticipants(targetRoom);
+      }
+    }, delayMs);
+    timer.unref?.();
+    durakTurnTimers.set(room.id, timer);
+  };
+
+  const startDurakRoomNow = (room: PersistedDurakRoom) => {
+    const deck = buildDurak32Deck(db.items);
+    startDurakGame(room, deck, {
+      rng: () => crypto.randomInt(0, 1_000_000) / 1_000_000,
+      now: Date.now(),
+    });
+    for (const invite of db.durakInvitations ?? []) {
+      if (invite.roomId === room.id && invite.status === 'pending') {
+        invite.status = 'declined';
+        sendRealtimeToUser(invite.toUserId, { type: 'durak_invitation_expired', roomId: room.id });
+      }
+    }
+    scheduleDurakTurnTimer(room);
+    sendDurakStateToParticipants(room, 'durak_started');
+    sendRealtimeToAll({ type: 'durak_lobby_updated', roomId: room.id });
+  };
+
+  const findActiveDurakRoomForUser = (userId: string) =>
+    (db.durakRooms ?? []).find(
+      (entry) =>
+        (entry.status === 'waiting' || entry.status === 'playing') &&
+        entry.players.some((p) => p.userId === userId)
+    );
+
+  const joinDurakRoom = (
+    user: UserProfile,
+    room: PersistedDurakRoom,
+    password: string,
+    invited: boolean,
+    acceptedInviteId?: string
+  ) => {
+    if (room.status !== 'waiting' || room.players.length >= room.maxPlayers) {
+      throw new DurakRuleError('Стол уже заполнен или игра уже началась.', 409);
+    }
+    if (room.players.some((p) => p.userId === user.id)) {
+      throw new DurakRuleError('Вы уже сидите за этим столом.', 409);
+    }
+    const existingActive = findActiveDurakRoomForUser(user.id);
+    if (existingActive && existingActive.id !== room.id) {
+      throw new DurakRuleError('У вас уже есть активный стол в «Дураке». Завершите или отмените его.', 409);
+    }
+    if (!invited && room.hasPassword) {
+      const actual = crypto.createHash('sha256').update(password).digest('hex');
+      if (!room.passwordHash || actual !== room.passwordHash) {
+        throw new DurakRuleError('Неверный пароль стола.', 400);
+      }
+    }
+    if (room.stake > 0) {
+      if (user.balance < room.stake) {
+        throw new DurakRuleError(`Недостаточно TC для ставки ${room.stake} TC.`, 400);
+      }
+      user.balance -= room.stake;
+      recordTx(user, 'durak_stake', -room.stake, `Ставка за стол «Дурак» (${room.mode === 'perevodnoy' ? 'Переводной' : 'Подкидной'})`);
+    }
+
+    room.players.push({
+      userId: user.id,
+      username: user.username,
+      avatarUrl: user.telegramPhotoUrl,
+      avatarColor: user.avatarColor,
+      seatIndex: room.players.length,
+      hand: [],
+      passed: false,
+      finishedRank: null,
+    });
+
+    if (acceptedInviteId) {
+      const inv = (db.durakInvitations ?? []).find((entry) => entry.id === acceptedInviteId);
+      if (inv) inv.status = 'accepted';
+    }
+
+    if (room.players.length >= room.maxPlayers) {
+      startDurakRoomNow(room);
+    } else {
+      sendDurakStateToParticipants(room);
+      sendRealtimeToAll({ type: 'durak_lobby_updated', roomId: room.id });
+    }
+  };
+
+  app.get('/api/durak', (_req, res) => {
+    const waiting = (db.durakRooms ?? [])
+      .filter((room) => room.status === 'waiting')
+      .map((room) => projectDurakRoomForUser(room));
+    res.json({ rooms: waiting });
+  });
+
+  app.get('/api/durak/current', (req, res) => {
+    const user = authenticatedUser(req, res); if (!user) return;
+    const active = findActiveDurakRoomForUser(user.id);
+    if (active) {
+      res.json({ room: projectDurakRoomForUser(active, user.id) });
+      return;
+    }
+    const now = Date.now();
+    const recentCompleted = (db.durakRooms ?? [])
+      .filter(
+        (entry) =>
+          entry.status === 'completed' &&
+          entry.players.some((p) => p.userId === user.id) &&
+          now - (entry.startedAt ?? entry.createdAt) < 120_000
+      )
+      .sort((a, b) => (b.startedAt ?? b.createdAt) - (a.startedAt ?? a.createdAt))[0];
+    res.json({ room: recentCompleted ? projectDurakRoomForUser(recentCompleted, user.id) : null });
+  });
+
+  app.get('/api/durak/:id', (req, res) => {
+    const user = authenticatedUser(req, res); if (!user) return;
+    const room = (db.durakRooms ?? []).find((entry) => entry.id === req.params.id);
+    if (!room) { res.status(404).json({ error: 'Стол не найден.' }); return; }
+    const isParticipant = room.players.some((p) => p.userId === user.id);
+    if (!isParticipant && room.status !== 'waiting') {
+      res.status(403).json({ error: 'Доступ к партии есть только у участников стола.' });
+      return;
+    }
+    res.json({ room: projectDurakRoomForUser(room, isParticipant ? user.id : undefined) });
+  });
+
+  app.post('/api/durak', (req, res) => {
+    const user = authenticatedUser(req, res); if (!user) return;
+    if (findActiveDurakRoomForUser(user.id)) {
+      res.status(409).json({ error: 'У вас уже есть активный стол в «Дураке».' });
+      return;
+    }
+    const { mode, maxPlayers, stake, password } = req.body as {
+      mode?: unknown;
+      maxPlayers?: unknown;
+      stake?: unknown;
+      password?: unknown;
+    };
+    const cleanMode: DurakMode = mode === 'perevodnoy' ? 'perevodnoy' : 'podkidnoy';
+    if (mode !== 'podkidnoy' && mode !== 'perevodnoy') {
+      res.status(400).json({ error: 'Выберите режим: Подкидной или Переводной.' });
+      return;
+    }
+    const cleanMax = Number(maxPlayers ?? 2);
+    if (!Number.isInteger(cleanMax) || cleanMax < 2 || cleanMax > 4) {
+      res.status(400).json({ error: 'Допустимое число игроков: от 2 до 4.' });
+      return;
+    }
+    const cleanStake = Number(stake ?? 0);
+    if (!Number.isInteger(cleanStake) || !ALLOWED_DURAK_STAKES.has(cleanStake)) {
+      res.status(400).json({ error: 'Выберите допустимую ставку (0, 100, 250, 500 или 1000 TC).' });
+      return;
+    }
+    if (cleanStake > 0 && user.balance < cleanStake) {
+      res.status(400).json({ error: 'Недостаточно TC для создания стола с такой ставкой.' });
+      return;
+    }
+
+    const cleanPassword = typeof password === 'string' ? password.trim().slice(0, 64) : '';
+    if (cleanStake > 0) {
+      user.balance -= cleanStake;
+      recordTx(user, 'durak_stake', -cleanStake, `Ставка за создание стола «Дурак» (${cleanMode === 'perevodnoy' ? 'Переводной' : 'Подкидной'})`);
+    }
+
+    const room: PersistedDurakRoom = {
+      id: uid('durak'),
+      mode: cleanMode,
+      status: 'waiting',
+      maxPlayers: cleanMax,
+      stake: cleanStake,
+      hasPassword: Boolean(cleanPassword),
+      passwordHash: cleanPassword ? crypto.createHash('sha256').update(cleanPassword).digest('hex') : undefined,
+      hostUserId: user.id,
+      hostUsername: user.username,
+      players: [
+        {
+          userId: user.id,
+          username: user.username,
+          avatarUrl: user.telegramPhotoUrl,
+          avatarColor: user.avatarColor,
+          seatIndex: 0,
+          hand: [],
+          passed: false,
+          finishedRank: null,
+        },
+      ],
+      drawPile: [],
+      trumpCard: null,
+      trumpSuit: null,
+      discardCount: 0,
+      table: [],
+      phase: 'playing',
+      attackerIndex: 0,
+      defenderIndex: 1,
+      winnerUserIds: [],
+      loserUserId: null,
+      isDraw: false,
+      pot: cleanStake,
+      payoutPerWinner: 0,
+      createdAt: Date.now(),
+      turnDeadlineAt: null,
+      lastActionText: `${user.username} открыл стол.`,
+    };
+
+    db.durakRooms = db.durakRooms ?? [];
+    db.durakRooms.unshift(room);
+    if (db.durakRooms.length > 200) db.durakRooms = db.durakRooms.slice(0, 200);
+    saveDb();
+    sendRealtimeToAll({ type: 'durak_lobby_updated', roomId: room.id });
+    res.json({ room: projectDurakRoomForUser(room, user.id), payload: buildPayload(user.id) });
+  });
+
+  app.post('/api/durak/:id/join', (req, res) => {
+    const user = authenticatedUser(req, res); if (!user) return;
+    const room = (db.durakRooms ?? []).find((entry) => entry.id === req.params.id);
+    if (!room) { res.status(404).json({ error: 'Стол не найден.' }); return; }
+    try {
+      const password = typeof req.body.password === 'string' ? req.body.password : '';
+      joinDurakRoom(user, room, password, false);
+      saveDb();
+      res.json({ room: projectDurakRoomForUser(room, user.id), payload: buildPayload(user.id) });
+    } catch (error) {
+      const status = error instanceof DurakRuleError ? error.statusCode : 400;
+      res.status(status).json({ error: error instanceof Error ? error.message : 'Не удалось войти за стол.' });
+    }
+  });
+
+  app.post('/api/durak/:id/start', (req, res) => {
+    const user = authenticatedUser(req, res); if (!user) return;
+    const room = (db.durakRooms ?? []).find((entry) => entry.id === req.params.id);
+    if (!room || room.hostUserId !== user.id || room.status !== 'waiting') {
+      res.status(404).json({ error: 'Ожидающий стол не найден.' });
+      return;
+    }
+    try {
+      startDurakRoomNow(room);
+      saveDb();
+      res.json({ room: projectDurakRoomForUser(room, user.id), payload: buildPayload(user.id) });
+    } catch (error) {
+      const status = error instanceof DurakRuleError ? error.statusCode : 400;
+      res.status(status).json({ error: error instanceof Error ? error.message : 'Не удалось начать партию.' });
+    }
+  });
+
+  app.post('/api/durak/:id/leave', (req, res) => {
+    const user = authenticatedUser(req, res); if (!user) return;
+    const room = (db.durakRooms ?? []).find((entry) => entry.id === req.params.id);
+    if (!room || room.status !== 'waiting') {
+      res.status(404).json({ error: 'Ожидающий стол не найден.' });
+      return;
+    }
+    if (room.hostUserId === user.id) {
+      res.status(400).json({ error: 'Хост может отменить стол кнопкой отмены.' });
+      return;
+    }
+    const idx = room.players.findIndex((p) => p.userId === user.id);
+    if (idx < 0) {
+      res.status(404).json({ error: 'Вы не сидите за этим столом.' });
+      return;
+    }
+    room.players.splice(idx, 1);
+    room.players.forEach((p, seatIdx) => { p.seatIndex = seatIdx; });
+    if (room.stake > 0) {
+      user.balance += room.stake;
+      recordTx(user, 'durak_stake', room.stake, 'Возврат ставки при выходе со стола «Дурак»');
+    }
+    room.pot = room.stake * room.players.length;
+    room.lastActionText = `${user.username} покинул стол.`;
+    saveDb();
+    sendDurakStateToParticipants(room);
+    sendRealtimeToAll({ type: 'durak_lobby_updated', roomId: room.id });
+    res.json({ payload: buildPayload(user.id) });
+  });
+
+  app.delete('/api/durak/:id', (req, res) => {
+    const user = authenticatedUser(req, res); if (!user) return;
+    const room = (db.durakRooms ?? []).find((entry) => entry.id === req.params.id);
+    if (!room || room.hostUserId !== user.id || room.status !== 'waiting') {
+      res.status(404).json({ error: 'Ожидающий стол недоступен.' });
+      return;
+    }
+    if (room.stake > 0) {
+      for (const seated of room.players) {
+        const account = db.users.find((u) => u.id === seated.userId);
+        if (account) {
+          account.balance += room.stake;
+          recordTx(account, 'durak_stake', room.stake, 'Возврат ставки: стол «Дурак» отменён');
+        }
+      }
+    }
+    for (const invite of db.durakInvitations ?? []) {
+      if (invite.roomId === room.id && invite.status === 'pending') {
+        invite.status = 'declined';
+        sendRealtimeToUser(invite.toUserId, { type: 'durak_invitation_expired', roomId: room.id });
+      }
+    }
+    room.status = 'cancelled';
+    room.pot = 0;
+    for (const seated of room.players) {
+      if (seated.userId !== user.id) {
+        sendRealtimeToUser(seated.userId, { type: 'durak_table_cancelled', roomId: room.id, username: user.username });
+      }
+    }
+    saveDb();
+    sendRealtimeToAll({ type: 'durak_lobby_updated', roomId: room.id });
+    res.json({ payload: buildPayload(user.id) });
+  });
+
+  app.post('/api/durak/:id/invite', (req, res) => {
+    const user = authenticatedUser(req, res); if (!user) return;
+    const room = (db.durakRooms ?? []).find((entry) => entry.id === req.params.id);
+    const friendId = typeof req.body.friendId === 'string' ? req.body.friendId : '';
+    const friend = friendId ? db.users.find((entry) => entry.id === friendId) : undefined;
+    if (!room || room.hostUserId !== user.id || room.status !== 'waiting' || !friend || !user.friends.includes(friend.id)) {
+      res.status(400).json({ error: 'Пригласить можно только друга за свой свободный стол.' });
+      return;
+    }
+    if (room.players.some((p) => p.userId === friend.id)) {
+      res.status(409).json({ error: 'Этот друг уже сидит за столом.' });
+      return;
+    }
+    db.durakInvitations = db.durakInvitations ?? [];
+    if (db.durakInvitations.some((entry) => entry.roomId === room.id && entry.toUserId === friend.id && entry.status === 'pending')) {
+      res.status(409).json({ error: 'Приглашение этому другу уже отправлено.' });
+      return;
+    }
+    const invite: PersistedDurakInvitation = {
+      id: uid('durak_inv'),
+      roomId: room.id,
+      fromUserId: user.id,
+      toUserId: friend.id,
+      status: 'pending',
+      createdAt: Date.now(),
+    };
+    db.durakInvitations.unshift(invite);
+    saveDb();
+    sendRealtimeToUser(friend.id, {
+      type: 'durak_invitation',
+      inviteId: invite.id,
+      roomId: room.id,
+      fromUsername: user.username,
+      username: user.username,
+      stake: room.stake,
+      mode: room.mode,
+    });
+    res.json({ ok: true, inviteId: invite.id });
+  });
+
+  app.post('/api/durak-invitations/:id/accept', (req, res) => {
+    const user = authenticatedUser(req, res); if (!user) return;
+    const invite = (db.durakInvitations ?? []).find(
+      (entry) => entry.id === req.params.id && entry.toUserId === user.id && entry.status === 'pending'
+    );
+    if (!invite) {
+      res.status(404).json({ error: 'Приглашение уже неактуально.', payload: buildPayload(user.id) });
+      return;
+    }
+    const room = (db.durakRooms ?? []).find((entry) => entry.id === invite.roomId);
+    if (!room || room.status !== 'waiting') {
+      invite.status = 'declined';
+      saveDb();
+      res.status(409).json({ error: 'Стол уже занят или отменён.', payload: buildPayload(user.id) });
+      return;
+    }
+    const host = db.users.find((entry) => entry.id === room.hostUserId);
+    if (!host || !host.friends.includes(user.id)) {
+      invite.status = 'declined';
+      saveDb();
+      res.status(403).json({ error: 'Приглашение недействительно: пользователь больше не в друзьях.', payload: buildPayload(user.id) });
+      return;
+    }
+    try {
+      joinDurakRoom(user, room, '', true, invite.id);
+      saveDb();
+      sendRealtimeToUser(invite.fromUserId, { type: 'durak_invitation_accepted', roomId: room.id, username: user.username });
+      res.json({ room: projectDurakRoomForUser(room, user.id), payload: buildPayload(user.id) });
+    } catch (error) {
+      const status = error instanceof DurakRuleError ? error.statusCode : 400;
+      res.status(status).json({ error: error instanceof Error ? error.message : 'Не удалось принять приглашение.', payload: buildPayload(user.id) });
+    }
+  });
+
+  app.delete('/api/durak-invitations/:id', (req, res) => {
+    const user = authenticatedUser(req, res); if (!user) return;
+    const invite = (db.durakInvitations ?? []).find(
+      (entry) => entry.id === req.params.id && entry.toUserId === user.id && entry.status === 'pending'
+    );
+    if (!invite) { res.status(404).json({ error: 'Приглашение не найдено.' }); return; }
+    invite.status = 'declined';
+    saveDb();
+    sendRealtimeToUser(invite.fromUserId, { type: 'durak_invitation_declined', username: user.username });
+    res.json({ payload: buildPayload(user.id) });
+  });
+
+  app.post('/api/durak/:id/action', (req, res) => {
+    const user = authenticatedUser(req, res); if (!user) return;
+    const room = (db.durakRooms ?? []).find((entry) => entry.id === req.params.id);
+    if (!room) { res.status(404).json({ error: 'Стол не найден.' }); return; }
+
+    const body = req.body as { type?: unknown; cardId?: unknown; pairIndex?: unknown };
+    let action: DurakActionPayload;
+    if (body.type === 'attack' && typeof body.cardId === 'string') {
+      action = { type: 'attack', cardId: body.cardId };
+    } else if (body.type === 'defend' && typeof body.cardId === 'string') {
+      action = {
+        type: 'defend',
+        cardId: body.cardId,
+        pairIndex: typeof body.pairIndex === 'number' ? body.pairIndex : undefined,
+      };
+    } else if (body.type === 'transfer' && typeof body.cardId === 'string') {
+      action = { type: 'transfer', cardId: body.cardId };
+    } else if (body.type === 'pass') {
+      action = { type: 'pass' };
+    } else if (body.type === 'take') {
+      action = { type: 'take' };
+    } else {
+      res.status(400).json({ error: 'Некорректное действие за столом.' });
+      return;
+    }
+
+    try {
+      applyDurakAction(room, user.id, action, Date.now());
+      if ((room.status as string) === 'completed') {
+        settleCompletedDurakRoom(room);
+      } else {
+        scheduleDurakTurnTimer(room);
+        sendDurakStateToParticipants(room);
+      }
+      saveDb();
+      res.json({ room: projectDurakRoomForUser(room, user.id), payload: buildPayload(user.id) });
+    } catch (error) {
+      const status = error instanceof DurakRuleError ? error.statusCode : 400;
+      res.status(status).json({ error: error instanceof Error ? error.message : 'Ход невозможен.' });
+    }
+  });
+
+  app.post('/api/durak/:id/forfeit', (req, res) => {
+    const user = authenticatedUser(req, res); if (!user) return;
+    const room = (db.durakRooms ?? []).find((entry) => entry.id === req.params.id);
+    if (!room) { res.status(404).json({ error: 'Стол не найден.' }); return; }
+    try {
+      forfeitDurakPlayer(room, user.id);
+      settleCompletedDurakRoom(room);
+      saveDb();
+      res.json({ room: projectDurakRoomForUser(room, user.id), payload: buildPayload(user.id) });
+    } catch (error) {
+      const status = error instanceof DurakRuleError ? error.statusCode : 400;
+      res.status(status).json({ error: error instanceof Error ? error.message : 'Не удалось сдаться.' });
+    }
   });
 
   app.post('/api/finance/deposit', (_req, res) => {
@@ -3527,6 +4120,11 @@ export async function startServer(options: ServerOptions = {}) {
             if (room && (room.hostUserId === userId || room.guestUserId === userId)) {
               ws.send(JSON.stringify({ type: 'battle_state', roomId: room.id, payload: publicBattle(room, userId) }));
             }
+          } else if (message.type === 'subscribe_durak' && typeof message.roomId === 'string' && message.roomId) {
+            const room = (db.durakRooms ?? []).find((entry) => entry.id === message.roomId);
+            if (room && room.players.some((p) => p.userId === userId)) {
+              ws.send(JSON.stringify({ type: 'durak_state_updated', roomId: room.id, room: projectDurakRoomForUser(room, userId) }));
+            }
           }
         } catch { /* Ignore malformed client messages. */ }
       });
@@ -3551,6 +4149,10 @@ export async function startServer(options: ServerOptions = {}) {
       clearTimeout(timer);
     }
     activeBattleTimers.clear();
+    for (const timer of durakTurnTimers.values()) {
+      clearTimeout(timer);
+    }
+    durakTurnTimers.clear();
     for (const sockets of socketsByUser.values()) {
       for (const socket of sockets) {
         socket.terminate();

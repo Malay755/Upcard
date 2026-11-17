@@ -60,6 +60,8 @@ const TX_LABELS: Record<TransactionType, string> = {
   upgrade_win: 'Выигрыш апгрейда',
   battle_stake: 'Ставка в батле',
   battle_win: 'Выигрыш в батле',
+  durak_stake: 'Ставка в «Дураке»',
+  durak_win: 'Выигрыш в «Дураке»',
   daily_bonus: 'Ежедневный бонус',
   referral_bonus: 'Реферальный бонус',
   referral_commission: 'Реферальная комиссия 5%',

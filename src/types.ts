@@ -2,10 +2,84 @@ export type Rarity = 'common' | 'rare' | 'super_rare' | 'epic' | 'legendary';
 
 export type RollMode = 'under' | 'over';
 
-export type AppTab = 'upgrade' | 'contracts' | 'cases' | 'battles' | 'bonuses' | 'profile';
+export type AppTab = 'upgrade' | 'contracts' | 'cases' | 'battles' | 'games' | 'bonuses' | 'profile';
 export type BattleMode = 'cases' | 'upgrade';
 export type BattleStatus = 'waiting' | 'completed' | 'cancelled';
 export type MinigameId = 'harvest' | 'mines' | 'race';
+
+export type DurakSuit = 'spades' | 'hearts' | 'diamonds' | 'clubs';
+export type DurakRank = 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14;
+export type DurakMode = 'podkidnoy' | 'perevodnoy';
+export type DurakRoomStatus = 'waiting' | 'playing' | 'completed' | 'cancelled';
+export type DurakBoutPhase = 'playing' | 'taking';
+
+export interface DurakCard {
+  id: string;
+  itemId: string;
+  name: string;
+  suit: DurakSuit;
+  rank: DurakRank;
+  imageUrl: string;
+}
+
+export interface DurakTablePair {
+  attack: DurakCard;
+  defense: DurakCard | null;
+}
+
+export interface DurakPlayerPublic {
+  userId: string;
+  username: string;
+  avatarUrl?: string;
+  avatarColor?: string;
+  seatIndex: number;
+  cardCount: number;
+  passed: boolean;
+  finishedRank: number | null;
+}
+
+export interface DurakRoomSummary {
+  id: string;
+  mode: DurakMode;
+  status: DurakRoomStatus;
+  maxPlayers: number;
+  stake: number;
+  hasPassword: boolean;
+  hostUserId: string;
+  hostUsername: string;
+  players: DurakPlayerPublic[];
+  createdAt: number;
+  startedAt?: number;
+}
+
+export interface DurakRoomProjection extends DurakRoomSummary {
+  trumpSuit: DurakSuit | null;
+  trumpCard: DurakCard | null;
+  deckCount: number;
+  discardCount: number;
+  table: DurakTablePair[];
+  phase: DurakBoutPhase;
+  attackerIndex: number;
+  defenderIndex: number;
+  turnDeadlineAt: number | null;
+  myHand: DurakCard[];
+  winnerUserIds: string[];
+  loserUserId: string | null;
+  isDraw: boolean;
+  pot: number;
+  payoutPerWinner: number;
+  lastActionText?: string;
+}
+
+export interface DurakInvitationSummary {
+  id: string;
+  roomId: string;
+  fromUsername: string;
+  mode: DurakMode;
+  stake: number;
+  maxPlayers: number;
+  createdAt: number;
+}
 
 export interface MinigameEnergySlot {
   charges: number;
@@ -36,6 +110,9 @@ export interface ItemCard {
   price: number;
   imageUrl: string;
   createdAt: number;
+  durakSuit?: DurakSuit;
+  durakRank?: DurakRank;
+  durakImageUrl?: string;
 }
 
 export interface InventoryItem {
@@ -66,6 +143,8 @@ export type TransactionType =
   | 'upgrade_win'
   | 'battle_stake'
   | 'battle_win'
+  | 'durak_stake'
+  | 'durak_win'
   | 'daily_bonus'
   | 'referral_bonus'
   | 'referral_commission'
@@ -282,6 +361,7 @@ export interface BootstrapPayload {
   friends: FriendSummary[];
   friendRequestsReceived: FriendRequestSummary[];
   battleInvitations: BattleInvitationSummary[];
+  durakInvitations?: DurakInvitationSummary[];
   minigames?: MinigameStatusMap;
   authenticated?: boolean;
 }

@@ -17,6 +17,7 @@ interface HeaderProps {
   onToggleMute: () => void;
   pendingFriendRequests?: number;
   pendingBattleInvites?: number;
+  pendingDurakInvites?: number;
 }
 
 const NAV_ITEMS: { id: AppTab; label: string }[] = [
@@ -24,6 +25,7 @@ const NAV_ITEMS: { id: AppTab; label: string }[] = [
   { id: 'contracts', label: 'Контракты' },
   { id: 'cases', label: 'Кейсы' },
   { id: 'battles', label: 'Батлы' },
+  { id: 'games', label: 'Игры' },
   { id: 'bonuses', label: 'Бонусы' },
   { id: 'profile', label: 'Профиль' },
 ];
@@ -40,12 +42,14 @@ export const Header: React.FC<HeaderProps> = ({
   onToggleMute,
   pendingFriendRequests = 0,
   pendingBattleInvites = 0,
+  pendingDurakInvites = 0,
 }) => {
   const [scrolled, setScrolled] = useState(false);
 
   const getTabBadgeCount = (tabId: AppTab): number => {
     if (tabId === 'profile') return pendingFriendRequests;
     if (tabId === 'battles') return pendingBattleInvites;
+    if (tabId === 'games') return pendingDurakInvites;
     return 0;
   };
 
@@ -72,7 +76,7 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
 
         {/* Center Zone: Clean Single-Line Navigation */}
-        <nav aria-label="Основная навигация" className="hidden md:flex items-center gap-7">
+        <nav aria-label="Основная навигация" className="hidden md:flex items-center gap-4 lg:gap-6">
           {NAV_ITEMS.map((item) => {
             const isActive = activeTab === item.id;
             const badge = getTabBadgeCount(item.id);
@@ -172,21 +176,22 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
       </div>
 
-      {/* Full-visibility 3x2 Mobile Nav Grid */}
+      {/* Full-visibility 3-column Mobile Nav Grid */}
       <nav
         aria-label="Мобильная навигация"
         className="grid grid-cols-3 gap-1.5 md:hidden border-t border-white/[0.06] px-2.5 py-2 bg-[#0D0F12]"
       >
-        {NAV_ITEMS.map((item) => {
+        {NAV_ITEMS.map((item, idx) => {
           const isActive = activeTab === item.id;
           const badge = getTabBadgeCount(item.id);
+          const spanFull = idx === NAV_ITEMS.length - 1 ? 'col-span-3' : '';
           return (
             <button
               key={item.id}
               type="button"
               onClick={() => onTabChange(item.id)}
               aria-current={isActive ? 'page' : undefined}
-              className={`min-h-[40px] w-full flex items-center justify-center gap-1.5 px-2 py-2 text-[11px] font-display font-bold uppercase tracking-wider rounded-lg border transition-colors active:scale-[0.97] whitespace-nowrap cursor-pointer ${
+              className={`${spanFull} min-h-[40px] w-full flex items-center justify-center gap-1.5 px-2 py-2 text-[11px] font-display font-bold uppercase tracking-wider rounded-lg border transition-colors active:scale-[0.97] whitespace-nowrap cursor-pointer ${
                 isActive
                   ? 'text-[#FACC15] bg-[#FACC15]/14 border-[#FACC15]/35 shadow-[0_0_12px_rgba(250,204,21,0.14)]'
                   : 'text-slate-300 bg-[#14161A] border-white/[0.06] hover:text-white'

@@ -341,6 +341,237 @@
 .winner-backdrop { animation: modal-fade-in .35s ease-out both; }
 .winner-panel { animation: modal-panel-in .55s cubic-bezier(.22,1,.36,1) both; }
 
+/* Durak deck & card animations (compositor-only transform/opacity) */
+@keyframes durak-deck-float {
+  0%, 100% {
+    transform: translate3d(0, 0, 0) rotate(0deg);
+  }
+  50% {
+    transform: translate3d(0, -3px, 0) rotate(-0.6deg);
+  }
+}
+
+.durak-deck-float {
+  animation: durak-deck-float 3.4s ease-in-out infinite;
+}
+
+@keyframes durak-deck-sheen {
+  0% {
+    opacity: 0;
+    transform: translate3d(-140%, 0, 0) rotate(24deg);
+  }
+  20% {
+    opacity: 0.45;
+  }
+  55% {
+    opacity: 0;
+    transform: translate3d(180%, 0, 0) rotate(24deg);
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(180%, 0, 0) rotate(24deg);
+  }
+}
+
+.durak-deck-sheen {
+  animation: durak-deck-sheen 4.5s ease-in-out infinite;
+}
+
+@keyframes durak-deck-recoil {
+  0% {
+    transform: scale(1) translate3d(0, 0, 0);
+  }
+  25% {
+    transform: scale(0.94, 0.96) translate3d(-2px, 2px, 0) rotate(-3deg);
+  }
+  65% {
+    transform: scale(1.03) translate3d(1px, -3px, 0) rotate(1.5deg);
+  }
+  100% {
+    transform: scale(1) translate3d(0, 0, 0) rotate(0deg);
+  }
+}
+
+.durak-deck-recoil {
+  animation: durak-deck-recoil 0.48s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes durak-deck-riffle {
+  0% {
+    transform: translate3d(0, 0, 0) rotate(0deg) scale(1);
+  }
+  22% {
+    transform: translate3d(-6px, -5px, 0) rotate(-8deg) scale(1.04);
+  }
+  52% {
+    transform: translate3d(6px, -3px, 0) rotate(7deg) scale(1.03);
+  }
+  78% {
+    transform: translate3d(-2px, 1px, 0) rotate(-2deg) scale(0.99);
+  }
+  100% {
+    transform: translate3d(0, 0, 0) rotate(0deg) scale(1);
+  }
+}
+
+.durak-deck-riffle {
+  animation: durak-deck-riffle 0.56s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes durak-draw-fly-down {
+  0% {
+    opacity: 0.95;
+    transform: translate3d(0, 0, 0) scale(1) rotate(0deg);
+  }
+  35% {
+    opacity: 1;
+    transform: translate3d(-44px, 34px, 0) scale(1.06) rotate(-14deg);
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(-125px, 118px, 0) scale(0.75) rotate(-26deg);
+  }
+}
+
+.durak-draw-fly-down {
+  animation: durak-draw-fly-down 0.58s cubic-bezier(0.22, 1, 0.36, 1) var(--draw-delay, 0ms) both;
+}
+
+@keyframes durak-draw-fly-up {
+  0% {
+    opacity: 0.95;
+    transform: translate3d(0, 0, 0) scale(1) rotate(0deg);
+  }
+  35% {
+    opacity: 1;
+    transform: translate3d(-42px, -36px, 0) scale(1.04) rotate(12deg);
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(-120px, -112px, 0) scale(0.7) rotate(22deg);
+  }
+}
+
+.durak-draw-fly-up {
+  animation: durak-draw-fly-up 0.58s cubic-bezier(0.22, 1, 0.36, 1) var(--draw-delay, 0ms) both;
+}
+
+@keyframes durak-trump-peek {
+  0%, 100% {
+    transform: translate3d(20px, 0, 0);
+  }
+  50% {
+    transform: translate3d(23px, -1px, 0);
+  }
+}
+
+.durak-trump-peek {
+  animation: durak-trump-peek 4.2s ease-in-out infinite;
+}
+
+@keyframes durak-hand-card-in {
+  0% {
+    opacity: 0;
+    transform: translate3d(38px, -26px, 0) scale(0.82) rotate(8deg);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1) rotate(0deg);
+  }
+}
+
+.durak-hand-card-in {
+  animation: durak-hand-card-in 0.38s cubic-bezier(0.16, 1, 0.3, 1) var(--deal-delay, 0ms) both;
+}
+
+@keyframes durak-table-card-in {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 26px, 0) scale(0.86) rotate(-4deg);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1) rotate(0deg);
+  }
+}
+
+.durak-table-card-in {
+  animation: durak-table-card-in 0.28s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes durak-defense-card-in {
+  0% {
+    opacity: 0;
+    transform: translate3d(18px, -22px, 0) scale(0.88) rotate(14deg);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1) rotate(0deg);
+  }
+}
+
+.durak-defense-card-in {
+  animation: durak-defense-card-in 0.28s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes durak-bito-pulse {
+  0% {
+    transform: scale(1);
+  }
+  40% {
+    transform: scale(1.1) rotate(-4deg);
+  }
+  100% {
+    transform: scale(1) rotate(0deg);
+  }
+}
+
+.durak-bito-pulse {
+  animation: durak-bito-pulse 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes durak-modal-card-in {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 12px, 0) scale(0.92);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+.durak-modal-card-in {
+  animation: durak-modal-card-in 0.32s cubic-bezier(0.16, 1, 0.3, 1) var(--deal-delay, 0ms) both;
+}
+
+@keyframes durak-fan-left {
+  0%, 100% { transform: translate3d(-10px, 2px, 0) rotate(-12deg); }
+  50% { transform: translate3d(-13px, -1px, 0) rotate(-15deg); }
+}
+
+@keyframes durak-fan-right {
+  0%, 100% { transform: translate3d(10px, 2px, 0) rotate(12deg); }
+  50% { transform: translate3d(13px, -1px, 0) rotate(15deg); }
+}
+
+@keyframes durak-fan-center {
+  0%, 100% { transform: translate3d(0, -1px, 0); }
+  50% { transform: translate3d(0, -4px, 0); }
+}
+
+.durak-fan-left {
+  animation: durak-fan-left 3.8s ease-in-out infinite;
+}
+
+.durak-fan-right {
+  animation: durak-fan-right 3.8s ease-in-out infinite;
+}
+
+.durak-fan-center {
+  animation: durak-fan-center 3.8s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

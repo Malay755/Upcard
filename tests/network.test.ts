@@ -6,7 +6,8 @@ import os from 'node:os';
 import path from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { WebSocket } from 'ws';
-import type { BootstrapPayload, BattleRoomSummary, FriendProfile, ItemCard } from '../src/types';
+import type { BootstrapPayload, BattleRoomSummary, DurakCard, DurakRoomProjection, FriendProfile, ItemCard } from '../src/types';
+import { canBeatCard } from '../src/utils/durakEngine';
 
 const TEST_BOT_TOKEN = '999999999:AAFakeTestBotTokenForNetworkTestsOnly_12345';
 const TMP_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'cardup-net-tests-'));
@@ -1026,3 +1027,239 @@ test('8. Battle invitation decline + re-invite to same room & WebSocket reconnec
     await friendWs.close();
   }
 });
+
+test('9. Durak 32-card metadata, waiting lobby, password guard, stake escrow & friend invite unfriend expiry', async () => {
+  const host = new TestClient();
+  const guest = new TestClient();
+  const friend = new TestClient();
+
+  const bHost = await host.loginWithTelegramWidget(90001, 'DurakHost', 'durak_host');
+  await guest.loginWithTelegramWidget(90002, 'DurakGuest', 'durak_guest');
+  await friend.loginWithTelegramWidget(90003, 'DurakFriend', 'durak_friend');
+
+  // Verify 32 cards in bootstrap items + exclusion of Толстый Кирилл and Перекус Тимура
+  const durakCards = bHost.items.filter((item) => item.durakSuit && item.durakRank);
+  assert.equal(durakCards.length, 32, 'Exactly 32 catalog cards must have Durak suit & rank');
+  const excluded1 = bHost.items.find((item) => item.id === 'card_fat_kirill');
+  const excluded2 = bHost.items.find((item) => item.id === 'card_timur_snack');
+  assert.ok(excluded1 && !excluded1.durakSuit && !excluded1.durakRank);
+  assert.ok(excluded2 && !excluded2.durakSuit && !excluded2.durakRank);
+  for (const card of durakCards) {
+    assert.ok(card.durakImageUrl?.startsWith('/assets/durak/'), `Missing durakImageUrl for ${card.id}`);
+    assert.ok(card.durakRank! >= 7 && card.durakRank! <= 14);
+  }
+
+  // Ensure both host and guest have >= 250 TC via daily bonus
+  const hostDaily = await host.request<{ payload: BootstrapPayload }>('/api/bonus/daily', { method: 'POST', body: {} });
+  const guestDaily = await guest.request<{ payload: BootstrapPayload }>('/api/bonus/daily', { method: 'POST', body: {} });
+  const hostBalanceBefore = hostDaily.json.payload.user.balance;
+  const guestBalanceBefore = guestDaily.json.payload.user.balance;
+  assert.ok(hostBalanceBefore >= 250 && guestBalanceBefore >= 250);
+
+  // Establish friendship between host & friend
+  await host.request('/api/friends', { method: 'POST', body: { code: friend.friendCode } });
+  const reqId = (await friend.request<BootstrapPayload>('/api/bootstrap')).json.friendRequestsReceived[0].id;
+  await friend.request(`/api/friends/requests/${reqId}/accept`, { method: 'POST', body: {} });
+
+  const friendWs = await friend.connectWs();
+  try {
+    // Host creates 3-player Perevodnoy room with stake 250 + password
+    const createRes = await host.request<{ room: DurakRoomProjection; payload: BootstrapPayload }>('/api/durak', {
+      method: 'POST',
+      body: { mode: 'perevodnoy', maxPlayers: 3, stake: 250, password: 'secret123' },
+    });
+    assert.equal(createRes.status, 200);
+    const roomId = createRes.json.room.id;
+    assert.equal(createRes.json.room.mode, 'perevodnoy');
+    assert.equal(createRes.json.room.hasPassword, true);
+    assert.equal(createRes.json.room.status, 'waiting');
+    assert.equal(createRes.json.payload.user.balance, hostBalanceBefore - 250);
+
+    // Wrong password rejected with 400
+    const badJoin = await guest.request(`/api/durak/${roomId}/join`, {
+      method: 'POST',
+      body: { password: 'wrong' },
+    });
+    assert.equal(badJoin.status, 400);
+
+    // Correct password joins & deducts stake
+    const okJoin = await guest.request<{ room: DurakRoomProjection; payload: BootstrapPayload }>(`/api/durak/${roomId}/join`, {
+      method: 'POST',
+      body: { password: 'secret123' },
+    });
+    assert.equal(okJoin.status, 200);
+    assert.equal(okJoin.json.room.players.length, 2);
+    assert.equal(okJoin.json.payload.user.balance, guestBalanceBefore - 250);
+
+    // Host invites friend -> friend sees invite over WS
+    const invRes = await host.request<{ inviteId: string }>(`/api/durak/${roomId}/invite`, {
+      method: 'POST',
+      body: { friendId: friend.userId },
+    });
+    assert.equal(invRes.status, 200);
+    await friendWs.waitForEvent('durak_invitation');
+
+    // Guest leaves waiting room -> gets 250 TC stake refunded
+    const leaveRes = await guest.request<{ payload: BootstrapPayload }>(`/api/durak/${roomId}/leave`, {
+      method: 'POST',
+      body: {},
+    });
+    assert.equal(leaveRes.status, 200);
+    assert.equal(leaveRes.json.payload.user.balance, guestBalanceBefore);
+
+    // Unfriend removes pending Durak invitation cleanly
+    await host.request(`/api/friends/${friend.userId}`, { method: 'DELETE' });
+    await friendWs.waitForEvent('durak_invitation_expired');
+    const friendBoot = await friend.request<BootstrapPayload>('/api/bootstrap');
+    assert.equal((friendBoot.json.durakInvitations ?? []).length, 0);
+
+    // Host cancels waiting room -> gets 250 TC stake refunded
+    const delRes = await host.request<{ payload: BootstrapPayload }>(`/api/durak/${roomId}`, { method: 'DELETE' });
+    assert.equal(delRes.status, 200);
+    assert.equal(delRes.json.payload.user.balance, hostBalanceBefore);
+  } finally {
+    await friendWs.close();
+  }
+});
+
+test('10. Durak online match: privacy boundary, WS sync, attack/defend/take bout & forfeit payout', async () => {
+  const host = new TestClient();
+  const joiner = new TestClient();
+  const observer = new TestClient();
+
+  await host.loginWithTelegramWidget(100001, 'MatchHost', 'match_host');
+  await joiner.loginWithTelegramWidget(100002, 'MatchJoin', 'match_join');
+  await observer.loginWithTelegramWidget(100003, 'MatchObs', 'match_obs');
+
+  // Give both players daily bonus so both afford stake 100 TC
+  const hostDaily = await host.request<{ payload: BootstrapPayload }>('/api/bonus/daily', { method: 'POST', body: {} });
+  const joinerDaily = await joiner.request<{ payload: BootstrapPayload }>('/api/bonus/daily', { method: 'POST', body: {} });
+  const hostBalStart = hostDaily.json.payload.user.balance;
+  const joinerBalStart = joinerDaily.json.payload.user.balance;
+
+  const hostWs = await host.connectWs();
+  const joinerWs = await joiner.connectWs();
+
+  try {
+    const createRes = await host.request<{ room: DurakRoomProjection }>('/api/durak', {
+      method: 'POST',
+      body: { mode: 'podkidnoy', maxPlayers: 2, stake: 100 },
+    });
+    assert.equal(createRes.status, 200);
+    const roomId = createRes.json.room.id;
+
+    // Joiner enters 2-player table -> auto-starts immediately
+    const joinRes = await joiner.request<{ room: DurakRoomProjection }>(`/api/durak/${roomId}/join`, {
+      method: 'POST',
+      body: {},
+    });
+    assert.equal(joinRes.status, 200);
+    assert.equal(joinRes.json.room.status, 'playing');
+
+    const hostStarted = await hostWs.waitForEvent('durak_started');
+    const joinerStarted = await joinerWs.waitForEvent('durak_started');
+
+    const hostView = hostStarted.room as unknown as DurakRoomProjection & Record<string, unknown>;
+    const joinerView = joinerStarted.room as unknown as DurakRoomProjection & Record<string, unknown>;
+
+    // Privacy checks: neither client receives drawPile, passwordHash, or opponent hand cards
+    assert.equal('drawPile' in hostView, false);
+    assert.equal('passwordHash' in hostView, false);
+    assert.equal(hostView.myHand.length, 6);
+    assert.equal(joinerView.myHand.length, 6);
+    for (const p of hostView.players as unknown as Array<Record<string, unknown>>) {
+      assert.equal('hand' in p, false, 'Opponent hand array must never be exposed in public players list');
+    }
+    assert.equal(hostView.deckCount, 20);
+    assert.ok(hostView.trumpCard && hostView.trumpSuit);
+
+    // Non-participant observer gets 403 on active room
+    const obsRes = await observer.request(`/api/durak/${roomId}`);
+    assert.equal(obsRes.status, 403);
+
+    // Public lobby list does not expose started room
+    const lobbyRes = await observer.request<{ rooms: DurakRoomProjection[] }>('/api/durak');
+    assert.equal(lobbyRes.status, 200);
+    assert.equal(lobbyRes.json.rooms.some((r) => r.id === roomId), false);
+
+    // Resolve attacker & defender clients dynamically (lowest trump starts!)
+    const initialAttackerUserId = hostView.players[hostView.attackerIndex].userId;
+    const attackerClient = initialAttackerUserId === host.userId ? host : joiner;
+    const defenderClient = attackerClient === host ? joiner : host;
+    const attackerState = attackerClient === host ? hostView : joinerView;
+    let defenderState = defenderClient === host ? hostView : joinerView;
+
+    // Defender cannot open an attack
+    const illegalAttack = await defenderClient.request(`/api/durak/${roomId}/action`, {
+      method: 'POST',
+      body: { type: 'attack', cardId: defenderState.myHand[0].id },
+    });
+    assert.equal(illegalAttack.status, 400);
+
+    // Attacker plays first card
+    const attackCard: DurakCard = attackerState.myHand[0];
+    const attackRes = await attackerClient.request<{ room: DurakRoomProjection }>(`/api/durak/${roomId}/action`, {
+      method: 'POST',
+      body: { type: 'attack', cardId: attackCard.id },
+    });
+    assert.equal(attackRes.status, 200);
+    assert.equal(attackRes.json.room.table.length, 1);
+    assert.equal(attackRes.json.room.table[0].defense, null);
+
+    // Defender finds a valid beating card or takes
+    defenderState = (await defenderClient.request<{ room: DurakRoomProjection }>(`/api/durak/${roomId}`)).json.room as DurakRoomProjection & Record<string, unknown>;
+    const beater = defenderState.myHand.find((c) => canBeatCard(attackCard, c, defenderState.trumpSuit));
+    if (beater) {
+      const defRes = await defenderClient.request<{ room: DurakRoomProjection }>(`/api/durak/${roomId}/action`, {
+        method: 'POST',
+        body: { type: 'defend', cardId: beater.id, pairIndex: 0 },
+      });
+      assert.equal(defRes.status, 200);
+      assert.equal(defRes.json.room.table[0].defense?.id, beater.id);
+
+      // Attacker calls pass -> bout goes to Бито (discardCount = 2) and roles rotate
+      const passRes = await attackerClient.request<{ room: DurakRoomProjection }>(`/api/durak/${roomId}/action`, {
+        method: 'POST',
+        body: { type: 'pass' },
+      });
+      assert.equal(passRes.status, 200);
+      assert.equal(passRes.json.room.table.length, 0);
+      assert.equal(passRes.json.room.discardCount, 2);
+      assert.equal(passRes.json.room.players[passRes.json.room.attackerIndex].userId, defenderClient.userId);
+    } else {
+      const takeRes = await defenderClient.request<{ room: DurakRoomProjection }>(`/api/durak/${roomId}/action`, {
+        method: 'POST',
+        body: { type: 'take' },
+      });
+      assert.equal(takeRes.status, 200);
+      assert.equal(takeRes.json.room.phase, 'taking');
+
+      const passRes = await attackerClient.request<{ room: DurakRoomProjection }>(`/api/durak/${roomId}/action`, {
+        method: 'POST',
+        body: { type: 'pass' },
+      });
+      assert.equal(passRes.status, 200);
+      assert.equal(passRes.json.room.table.length, 0);
+      assert.equal(passRes.json.room.players[passRes.json.room.attackerIndex].userId, attackerClient.userId);
+    }
+
+    // Forfeit test: joiner forfeits -> host wins full 200 TC pot
+    const forfeitRes = await joiner.request<{ room: DurakRoomProjection; payload: BootstrapPayload }>(`/api/durak/${roomId}/forfeit`, {
+      method: 'POST',
+      body: {},
+    });
+    assert.equal(forfeitRes.status, 200);
+    assert.equal(forfeitRes.json.room.status, 'completed');
+    assert.equal(forfeitRes.json.room.loserUserId, joiner.userId);
+    assert.deepEqual(forfeitRes.json.room.winnerUserIds, [host.userId]);
+    assert.equal(forfeitRes.json.payload.user.balance, joinerBalStart - 100);
+
+    await hostWs.waitForEvent('durak_table_finished');
+    const hostBootAfter = await host.request<BootstrapPayload>('/api/bootstrap');
+    assert.equal(hostBootAfter.json.user.balance, hostBalStart + 100);
+  } finally {
+    await hostWs.close();
+    await joinerWs.close();
+  }
+});
+
