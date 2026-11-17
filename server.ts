@@ -59,8 +59,10 @@ import {
   syncDailyMinigameEnergy,
 } from './src/utils/minigameRules.ts';
 
-const PORT = Number(process.env.PORT) || 3000;
-const DATA_DIR = path.resolve(process.cwd(), 'data');
+const DEFAULT_PORT = Number(process.env.PORT) || 3000;
+const DATA_DIR = process.env.CARDUP_DATA_DIR
+  ? path.resolve(process.env.CARDUP_DATA_DIR)
+  : path.resolve(process.cwd(), 'data');
 const DB_PATH = path.join(DATA_DIR, 'db.json');
 const UPLOADS_DIR = path.resolve(process.cwd(), 'public', 'uploads');
 
@@ -127,6 +129,7 @@ interface PersistedBattleRoom {
 }
 
 const socketsByUser = new Map<string, Set<WebSocket>>();
+const activeBattleTimers = new Set<NodeJS.Timeout>();
 
 const MINIGAME_MAX_CHARGES = DAILY_MINIGAME_MAX_CHARGES;
 const MINES_GRID_SIZE = 16;
@@ -1345,6 +1348,15 @@ function sendRealtimeToBattle(room: PersistedBattleRoom, event: Record<string, u
   if (room.guestUserId) sendRealtimeToUser(room.guestUserId, event);
 }
 
+function sendRealtimeToAll(event: Record<string, unknown>): void {
+  const message = JSON.stringify(event);
+  for (const sockets of socketsByUser.values()) {
+    for (const socket of sockets) {
+      if (socket.readyState === WebSocket.OPEN) socket.send(message);
+    }
+  }
+}
+
 function publicBattle(room: PersistedBattleRoom, viewerUserId?: string): BattleRoomSummary {
   const isParticipant = viewerUserId === room.hostUserId || viewerUserId === room.guestUserId;
   return {
@@ -1761,11 +1773,24 @@ function saveDataUrlImageIfNeeded(imageUrl: string): string {
   return `data:image/${ext === 'jpg' ? 'jpeg' : ext};base64,${buffer.toString('base64')}`;
 }
 
-async function startServer() {
+export interface ServerOptions {
+  port?: number;
+  disableVite?: boolean;
+  disableTelegramBot?: boolean;
+}
+
+export async function startServer(options: ServerOptions = {}) {
+  const port = options.port ?? DEFAULT_PORT;
   await initializePostgres();
   const app = express();
   app.set('trust proxy', 1);
   app.use(express.json({ limit: '10mb' }));
+  app.use((req, _res, next) => {
+    if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body)) {
+      req.body = {};
+    }
+    next();
+  });
   app.use('/uploads', express.static(UPLOADS_DIR));
   usePostgresState(app);
 
@@ -1820,7 +1845,7 @@ async function startServer() {
     }).catch(() => undefined);
   };
 
-  if (telegramBotToken) {
+  if (telegramBotToken && !options.disableTelegramBot) {
     void (async () => {
       try {
         await fetch(`https://api.telegram.org/bot${telegramBotToken}/setMyCommands`, {
@@ -2006,7 +2031,18 @@ async function startServer() {
     }
     user.friends = user.friends.filter((id) => id !== friend.id);
     friend.friends = friend.friends.filter((id) => id !== user.id);
+    for (const invite of db.battleInvitations) {
+      if (
+        invite.status === 'pending' &&
+        ((invite.fromUserId === user.id && invite.toUserId === friend.id) ||
+          (invite.fromUserId === friend.id && invite.toUserId === user.id))
+      ) {
+        invite.status = 'declined';
+        sendRealtimeToUser(invite.toUserId, { type: 'battle_invitation_expired', roomId: invite.roomId });
+      }
+    }
     saveDb();
+    sendRealtimeToUser(friend.id, { type: 'friend_removed', username: user.username, friendId: user.id });
     res.json({ payload: buildPayload(user.id) });
   });
 
@@ -2157,10 +2193,10 @@ async function startServer() {
   });
 
   app.post('/api/referral/apply', (req, res) => {
-    const { code } = req.body as { code?: string };
+    const rawCode = (req.body as { code?: unknown }).code;
     const user = authenticatedUser(req, res);
     if (!user) return;
-    const cleanCode = (code ?? '').trim().toUpperCase();
+    const cleanCode = (typeof rawCode === 'string' ? rawCode : '').trim().toUpperCase();
 
     if (!cleanCode) {
       res.status(400).json({ error: 'Введите реферальный код.' });
@@ -2193,7 +2229,16 @@ async function startServer() {
     res.json({ payload: buildPayload(user.id), bonus: 300 });
   });
 
-  const resolveBattle = (room: PersistedBattleRoom) => {
+  const scheduleBattleTimer = (fn: () => void, delayMs: number) => {
+    const timer = setTimeout(() => {
+      activeBattleTimers.delete(timer);
+      fn();
+    }, delayMs);
+    timer.unref?.();
+    activeBattleTimers.add(timer);
+  };
+
+  const resolveBattle = (room: PersistedBattleRoom, acceptedInviteId?: string) => {
     const host = db.users.find((entry) => entry.id === room.hostUserId)!;
     const guest = db.users.find((entry) => entry.id === room.guestUserId)!;
     const awarded: InventoryItem[] = [];
@@ -2255,8 +2300,12 @@ async function startServer() {
     room.status = 'completed';
     for (const invite of db.battleInvitations) {
       if (invite.roomId === room.id && invite.status === 'pending') {
-        invite.status = 'declined';
-        sendRealtimeToUser(invite.toUserId, { type: 'battle_invitation_expired', roomId: room.id });
+        if (acceptedInviteId && invite.id === acceptedInviteId) {
+          invite.status = 'accepted';
+        } else {
+          invite.status = 'declined';
+          sendRealtimeToUser(invite.toUserId, { type: 'battle_invitation_expired', roomId: room.id });
+        }
       }
     }
     if (room.winnerUserId) {
@@ -2267,36 +2316,62 @@ async function startServer() {
     }
     syncUserAchievements(host);
     syncUserAchievements(guest);
-    sendRealtimeToBattle(room, { type: 'battle_started', roomId: room.id, startedAt: room.startedAt });
+    sendRealtimeToBattle(room, { type: 'battle_started', roomId: room.id, startedAt: room.startedAt, username: guest.username });
+    sendRealtimeToAll({ type: 'battle_lobby_updated', roomId: room.id });
     room.roundResults?.forEach((round, index) => {
-      setTimeout(() => sendRealtimeToBattle(room, { type: 'battle_round', roomId: room.id, round: index + 1, payload: round }), (index + 1) * 5400);
+      scheduleBattleTimer(() => sendRealtimeToBattle(room, { type: 'battle_round', roomId: room.id, round: index + 1, payload: round }), (index + 1) * 5400);
     });
-    setTimeout(() => sendRealtimeToBattle(room, { type: 'battle_finished', roomId: room.id, winnerUserId: room.winnerUserId }), room.durationMs);
+    scheduleBattleTimer(() => sendRealtimeToBattle(room, { type: 'battle_finished', roomId: room.id, winnerUserId: room.winnerUserId }), room.durationMs);
   };
 
-  const joinBattle = (user: UserProfile, room: PersistedBattleRoom, password: string, stakeIds: string[], invited: boolean) => {
-    if (room.status !== 'waiting' || room.hostUserId === user.id || room.guestUserId) throw new Error('Комната уже недоступна.');
+  class BattleActionError extends Error {
+    statusCode: number;
+    constructor(message: string, statusCode = 400) {
+      super(message);
+      this.statusCode = statusCode;
+    }
+  }
+
+  const findWaitingRoomForUser = (userId: string) =>
+    db.battles.find((entry) => entry.status === 'waiting' && (entry.hostUserId === userId || entry.guestUserId === userId));
+
+  const joinBattle = (
+    user: UserProfile,
+    room: PersistedBattleRoom,
+    password: string,
+    stakeIds: string[],
+    invited: boolean,
+    acceptedInviteId?: string
+  ) => {
+    if (room.status !== 'waiting' || room.hostUserId === user.id || room.guestUserId) {
+      throw new BattleActionError('Комната уже недоступна.', 409);
+    }
+    const existingWaiting = findWaitingRoomForUser(user.id);
+    if (existingWaiting && existingWaiting.id !== room.id) {
+      throw new BattleActionError('Сначала отмените свою активную ожидающую комнату.', 409);
+    }
     if (!invited && room.hasPassword) {
       const actual = crypto.createHash('sha256').update(password).digest('hex');
-      if (!room.passwordHash || actual !== room.passwordHash) throw new Error('Неверный пароль комнаты.');
+      if (!room.passwordHash || actual !== room.passwordHash) throw new BattleActionError('Неверный пароль комнаты.', 400);
     }
     if (room.mode === 'cases') {
       const box = db.cases.find((entry) => entry.id === room.caseId);
-      if (!box || !box.itemIds.some((id) => db.items.some((item) => item.id === id))) throw new Error('Кейс больше недоступен для открытия.');
+      if (!box || !box.itemIds.some((id) => db.items.some((item) => item.id === id))) throw new BattleActionError('Кейс больше недоступен для открытия.', 400);
       const cost = box.price * (room.caseCount ?? 1);
-      if (user.balance < cost) throw new Error('Недостаточно TC для участия в батле.');
+      if (user.balance < cost) throw new BattleActionError('Недостаточно TC для участия в батле.', 400);
       user.balance -= cost; recordTx(user, 'battle_stake', -cost, 'Взнос в батл кейсов');
     } else {
-      const uniqueIds = [...new Set(stakeIds)];
+      const cleanIds = stakeIds.filter((id): id is string => typeof id === 'string');
+      const uniqueIds = [...new Set(cleanIds)];
       const entries = user.inventory.filter((entry) => uniqueIds.includes(entry.instanceId));
       const value = entries.reduce((sum, entry) => sum + (db.items.find((item) => item.id === entry.itemId)?.price ?? 0), 0);
-      if (!entries.length || entries.length !== uniqueIds.length || value <= 0) throw new Error('Выберите карточки для ставки.');
+      if (!entries.length || entries.length !== uniqueIds.length || value <= 0) throw new BattleActionError('Выберите карточки для ставки.', 400);
       user.inventory = user.inventory.filter((entry) => !uniqueIds.includes(entry.instanceId));
       room.guestItems = entries; room.guestStakeValue = value;
       recordTx(user, 'battle_stake', 0, 'Карточки поставлены в батл', `${entries.length} карточек · ${value} TC по каталогу`);
     }
     room.guestUserId = user.id; room.guestUsername = user.username;
-    resolveBattle(room);
+    resolveBattle(room, acceptedInviteId);
   };
 
   app.get('/api/battles', (_req, res) => {
@@ -2305,18 +2380,48 @@ async function startServer() {
 
   app.get('/api/battles/current', (req, res) => {
     const user = authenticatedUser(req, res); if (!user) return;
-    const room = db.battles.find((entry) => (entry.hostUserId === user.id || entry.guestUserId === user.id)
-      && (entry.status === 'waiting' || (entry.status === 'completed' && Date.now() - (entry.startedAt ?? 0) < (entry.durationMs ?? 0) + 60_000)));
-    res.json({ battle: room ? publicBattle(room, user.id) : null });
+    const now = Date.now();
+    const waitingRoom = findWaitingRoomForUser(user.id);
+    if (waitingRoom) {
+      res.json({ battle: publicBattle(waitingRoom, user.id) });
+      return;
+    }
+    const activeCompleted = db.battles
+      .filter((entry) =>
+        (entry.hostUserId === user.id || entry.guestUserId === user.id)
+        && entry.status === 'completed'
+        && now - (entry.startedAt ?? 0) < (entry.durationMs ?? 0) + 60_000
+      )
+      .sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0))[0];
+    res.json({ battle: activeCompleted ? publicBattle(activeCompleted, user.id) : null });
   });
 
   app.post('/api/battles', (req, res) => {
     const user = authenticatedUser(req, res); if (!user) return;
-    const { mode, caseId, caseCount, password, stakeItemIds } = req.body as { mode?: BattleMode; caseId?: string; caseCount?: number; password?: string; stakeItemIds?: string[] };
+    if (findWaitingRoomForUser(user.id)) {
+      res.status(409).json({ error: 'У вас уже есть активная ожидающая комната. Сначала отмените её.' });
+      return;
+    }
+    const { mode, caseId, caseCount, password, stakeItemIds } = req.body as { mode?: BattleMode; caseId?: unknown; caseCount?: unknown; password?: unknown; stakeItemIds?: unknown };
     if (mode !== 'cases' && mode !== 'upgrade') { res.status(400).json({ error: 'Выберите режим батла.' }); return; }
-    const room: PersistedBattleRoom = { id: uid('battle'), mode, status: 'waiting', hostUserId: user.id, hostUsername: user.username, guestUserId: null, guestUsername: null, hasPassword: Boolean(password?.trim()), passwordHash: password?.trim() ? crypto.createHash('sha256').update(password.trim()).digest('hex') : undefined, hostItems: [], hostStakeValue: 0, guestStakeValue: 0, createdAt: Date.now() };
+    const cleanPassword = typeof password === 'string' ? password.trim().slice(0, 64) : '';
+    const room: PersistedBattleRoom = {
+      id: uid('battle'),
+      mode,
+      status: 'waiting',
+      hostUserId: user.id,
+      hostUsername: user.username,
+      guestUserId: null,
+      guestUsername: null,
+      hasPassword: Boolean(cleanPassword),
+      passwordHash: cleanPassword ? crypto.createHash('sha256').update(cleanPassword).digest('hex') : undefined,
+      hostItems: [],
+      hostStakeValue: 0,
+      guestStakeValue: 0,
+      createdAt: Date.now(),
+    };
     if (mode === 'cases') {
-      const box = db.cases.find((entry) => entry.id === caseId);
+      const box = typeof caseId === 'string' ? db.cases.find((entry) => entry.id === caseId) : undefined;
       const count = Number(caseCount);
       if (!box || !box.itemIds.some((id) => db.items.some((item) => item.id === id)) || !Number.isInteger(count) || count < 1 || count > 25) { res.status(400).json({ error: 'Выберите доступный кейс и число открытий от 1 до 25.' }); return; }
       const cost = box.price * count;
@@ -2324,7 +2429,8 @@ async function startServer() {
       user.balance -= cost; recordTx(user, 'battle_stake', -cost, 'Взнос в батл кейсов');
       room.caseId = box.id; room.caseName = box.name; room.caseCount = count;
     } else {
-      const ids = [...new Set(Array.isArray(stakeItemIds) ? stakeItemIds : [])];
+      const rawIds = Array.isArray(stakeItemIds) ? stakeItemIds.filter((id): id is string => typeof id === 'string') : [];
+      const ids = [...new Set(rawIds)];
       const entries = user.inventory.filter((entry) => ids.includes(entry.instanceId));
       const value = entries.reduce((sum, entry) => sum + (db.items.find((item) => item.id === entry.itemId)?.price ?? 0), 0);
       if (!entries.length || ids.length !== entries.length || value <= 0) { res.status(400).json({ error: 'Выберите карточки для ставки.' }); return; }
@@ -2333,6 +2439,7 @@ async function startServer() {
       recordTx(user, 'battle_stake', 0, 'Карточки поставлены в батл', `${entries.length} карточек · ${value} TC по каталогу`);
     }
     db.battles.unshift(room); saveDb();
+    sendRealtimeToAll({ type: 'battle_lobby_updated', roomId: room.id });
     res.json({ payload: buildPayload(user.id), battle: publicBattle(room, user.id) });
   });
 
@@ -2348,8 +2455,16 @@ async function startServer() {
     const user = authenticatedUser(req, res); if (!user) return;
     const room = db.battles.find((entry) => entry.id === req.params.id);
     if (!room) { res.status(404).json({ error: 'Комната не найдена.' }); return; }
-    try { joinBattle(user, room, String(req.body.password ?? ''), Array.isArray(req.body.stakeItemIds) ? req.body.stakeItemIds : [], false); saveDb(); res.json({ payload: buildPayload(user.id), battle: publicBattle(room, user.id) }); }
-    catch (error) { res.status(400).json({ error: error instanceof Error ? error.message : 'Не удалось войти в комнату.' }); }
+    try {
+      const password = typeof req.body.password === 'string' ? req.body.password : '';
+      const stakeIds = Array.isArray(req.body.stakeItemIds) ? req.body.stakeItemIds : [];
+      joinBattle(user, room, password, stakeIds, false);
+      saveDb();
+      res.json({ payload: buildPayload(user.id), battle: publicBattle(room, user.id) });
+    } catch (error) {
+      const status = error instanceof BattleActionError ? error.statusCode : 400;
+      res.status(status).json({ error: error instanceof Error ? error.message : 'Не удалось войти в комнату.' });
+    }
   });
 
   app.delete('/api/battles/:id', (req, res) => {
@@ -2365,15 +2480,18 @@ async function startServer() {
     for (const invite of db.battleInvitations) if (invite.roomId === room.id && invite.status === 'pending') {
       invite.status = 'declined'; sendRealtimeToUser(invite.toUserId, { type: 'battle_invitation_expired', roomId: room.id });
     }
-    room.status = 'cancelled'; saveDb(); res.json({ payload: buildPayload(user.id) });
+    room.status = 'cancelled'; saveDb();
+    sendRealtimeToAll({ type: 'battle_lobby_updated', roomId: room.id });
+    res.json({ payload: buildPayload(user.id) });
   });
 
   app.post('/api/battles/:id/invite', (req, res) => {
     const user = authenticatedUser(req, res); if (!user) return;
     const room = db.battles.find((entry) => entry.id === req.params.id);
-    const friend = db.users.find((entry) => entry.id === req.body.friendId);
+    const friendId = typeof req.body.friendId === 'string' ? req.body.friendId : '';
+    const friend = friendId ? db.users.find((entry) => entry.id === friendId) : undefined;
     if (!room || room.hostUserId !== user.id || room.status !== 'waiting' || !friend || !user.friends.includes(friend.id)) { res.status(400).json({ error: 'Пригласить можно только друга в свою свободную комнату.' }); return; }
-    if (db.battleInvitations.some((entry) => entry.roomId === room.id && entry.toUserId === friend.id && entry.status === 'pending')) { res.status(400).json({ error: 'Приглашение уже отправлено.' }); return; }
+    if (db.battleInvitations.some((entry) => entry.roomId === room.id && entry.toUserId === friend.id && entry.status === 'pending')) { res.status(409).json({ error: 'Приглашение уже отправлено.' }); return; }
     const invite: PersistedBattleInvitation = { id: uid('invite'), roomId: room.id, fromUserId: user.id, toUserId: friend.id, status: 'pending', createdAt: Date.now() };
     db.battleInvitations.unshift(invite); saveDb();
     sendRealtimeToUser(friend.id, { type: 'battle_invitation', inviteId: invite.id, roomId: room.id, fromUsername: user.username, username: user.username });
@@ -2391,14 +2509,24 @@ async function startServer() {
       res.status(409).json({ error: 'Комната уже занята или отменена — приглашение удалено.', payload: buildPayload(user.id) });
       return;
     }
+    const host = db.users.find((entry) => entry.id === room.hostUserId);
+    if (!host || !host.friends.includes(user.id)) {
+      invite.status = 'declined';
+      saveDb();
+      res.status(403).json({ error: 'Приглашение недействительно: пользователь больше не в списке друзей.', payload: buildPayload(user.id) });
+      return;
+    }
     try {
-      joinBattle(user, room, '', Array.isArray(req.body.stakeItemIds) ? req.body.stakeItemIds : [], true);
+      const stakeIds = Array.isArray(req.body.stakeItemIds) ? req.body.stakeItemIds : [];
+      joinBattle(user, room, '', stakeIds, true, invite.id);
       invite.status = 'accepted';
       saveDb();
       sendRealtimeToUser(invite.fromUserId, { type: 'battle_invitation_accepted', roomId: room.id, username: user.username });
       res.json({ payload: buildPayload(user.id), battle: publicBattle(room, user.id) });
+    } catch (error) {
+      const status = error instanceof BattleActionError ? error.statusCode : 400;
+      res.status(status).json({ error: error instanceof Error ? error.message : 'Не удалось принять приглашение.', payload: buildPayload(user.id) });
     }
-    catch (error) { res.status(400).json({ error: error instanceof Error ? error.message : 'Не удалось принять приглашение.' }); }
   });
 
   app.delete('/api/battle-invitations/:id', (req, res) => {
@@ -3351,18 +3479,28 @@ async function startServer() {
     res.json({ caseBox: newCase, cases: db.cases });
   });
 
-  if (process.env.NODE_ENV === 'production') {
-    const distDir = path.resolve(process.cwd(), 'dist');
-    app.use(express.static(distDir));
-    app.get('*', (_req, res) => {
-      res.sendFile(path.join(distDir, 'index.html'));
-    });
-  } else {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: 'spa',
-    });
-    app.use(vite.middlewares);
+  app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    if (err instanceof SyntaxError && 'status' in err && (err as { status?: number }).status === 400) {
+      res.status(400).json({ error: 'Некорректный JSON в запросе.' });
+      return;
+    }
+    res.status(500).json({ error: 'Внутренняя ошибка сервера.' });
+  });
+
+  if (!options.disableVite) {
+    if (process.env.NODE_ENV === 'production') {
+      const distDir = path.resolve(process.cwd(), 'dist');
+      app.use(express.static(distDir));
+      app.get('*', (_req, res) => {
+        res.sendFile(path.join(distDir, 'index.html'));
+      });
+    } else {
+      const vite = await createViteServer({
+        server: { middlewareMode: true },
+        appType: 'spa',
+      });
+      app.use(vite.middlewares);
+    }
   }
 
   const server = http.createServer(app);
@@ -3384,7 +3522,7 @@ async function startServer() {
       ws.on('message', (raw) => {
         try {
           const message = JSON.parse(raw.toString()) as { type?: string; roomId?: string };
-          if (message.type === 'subscribe_battle' && message.roomId) {
+          if (message.type === 'subscribe_battle' && typeof message.roomId === 'string' && message.roomId) {
             const room = db.battles.find((entry) => entry.id === message.roomId);
             if (room && (room.hostUserId === userId || room.guestUserId === userId)) {
               ws.send(JSON.stringify({ type: 'battle_state', roomId: room.id, payload: publicBattle(room, userId) }));
@@ -3398,12 +3536,38 @@ async function startServer() {
       });
     });
   });
-  server.listen(PORT, '0.0.0.0', () => {
-    console.log(`CARDUP server running at http://localhost:${PORT}`);
+
+  await new Promise<void>((resolve) => {
+    server.listen(port, '0.0.0.0', () => {
+      if (!options.disableVite) {
+        console.log(`CARDUP server running at http://localhost:${port}`);
+      }
+      resolve();
+    });
   });
+
+  const close = async () => {
+    for (const timer of activeBattleTimers) {
+      clearTimeout(timer);
+    }
+    activeBattleTimers.clear();
+    for (const sockets of socketsByUser.values()) {
+      for (const socket of sockets) {
+        socket.terminate();
+      }
+    }
+    socketsByUser.clear();
+    await new Promise<void>((resolve) => webSockets.close(() => resolve()));
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  };
+
+  return { app, server, close };
 }
 
-startServer().catch((err) => {
-  console.error('Failed to start server:', err);
-  process.exit(1);
-});
+const isEntrypoint = process.argv[1] && path.basename(process.argv[1]).startsWith('server');
+if (isEntrypoint) {
+  startServer().catch((err) => {
+    console.error('Failed to start server:', err);
+    process.exit(1);
+  });
+}

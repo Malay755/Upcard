@@ -25,6 +25,14 @@ export interface GoldCoinRig {
   dispose: () => void;
 }
 
+export type RoadHazardKind = 'oil' | 'spikes';
+
+export interface RoadHazardRig {
+  root: THREE.Group;
+  kind: RoadHazardKind;
+  dispose: () => void;
+}
+
 function createGrilleDiamondTexture(anisotropy: number): THREE.CanvasTexture {
   const c = document.createElement('canvas');
   c.width = 512;
@@ -874,3 +882,175 @@ export function buildGoldCoinMesh(anisotropy = 4): GoldCoinRig {
     },
   };
 }
+
+function createSpikeWarningTexture(): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  c.width = 256;
+  c.height = 64;
+  const ctx = c.getContext('2d')!;
+  ctx.fillStyle = '#0F172A';
+  ctx.fillRect(0, 0, c.width, c.height);
+
+  ctx.fillStyle = '#F59E0B';
+  for (let x = -32; x < 300; x += 36) {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x + 18, 0);
+    ctx.lineTo(x + 4, 64);
+    ctx.lineTo(x - 14, 64);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+export function buildRoadHazardMesh(kind: RoadHazardKind): RoadHazardRig {
+  const root = new THREE.Group();
+  const geometries: THREE.BufferGeometry[] = [];
+  const materials: THREE.Material[] = [];
+  const textures: THREE.Texture[] = [];
+
+  const trackGeo = <T extends THREE.BufferGeometry>(g: T): T => {
+    geometries.push(g);
+    return g;
+  };
+  const trackMat = <T extends THREE.Material>(m: T): T => {
+    materials.push(m);
+    return m;
+  };
+
+  if (kind === 'oil') {
+    // Glossy iridescent dark oil slick spread cleanly over asphalt (y = 0.018 + polygonOffset)
+    const oilMat = trackMat(
+      new THREE.MeshPhysicalMaterial({
+        color: 0x050811,
+        emissive: new THREE.Color(0x1e1b4b),
+        emissiveIntensity: 0.28,
+        metalness: 0.42,
+        roughness: 0.05,
+        clearcoat: 1.0,
+        clearcoatRoughness: 0.04,
+        polygonOffset: true,
+        polygonOffsetFactor: -2,
+        polygonOffsetUnits: -2,
+      })
+    );
+    const sheenMat = trackMat(
+      new THREE.MeshBasicMaterial({
+        color: 0x7e22ce,
+        transparent: true,
+        opacity: 0.48,
+        polygonOffset: true,
+        polygonOffsetFactor: -3,
+        polygonOffsetUnits: -3,
+      })
+    );
+    const edgeGlowMat = trackMat(
+      new THREE.MeshBasicMaterial({
+        color: 0x06b6d4,
+        transparent: true,
+        opacity: 0.42,
+        polygonOffset: true,
+        polygonOffsetFactor: -3,
+        polygonOffsetUnits: -3,
+      })
+    );
+
+    const mainDisc = trackGeo(new THREE.CircleGeometry(0.84, 24));
+    mainDisc.rotateX(-Math.PI / 2);
+    const mainLobe = new THREE.Mesh(mainDisc, oilMat);
+    mainLobe.scale.set(1.06, 1, 1.32);
+    mainLobe.position.set(0, 0.02, 0);
+    root.add(mainLobe);
+
+    const sideDisc = trackGeo(new THREE.CircleGeometry(0.52, 18));
+    sideDisc.rotateX(-Math.PI / 2);
+    const lobeA = new THREE.Mesh(sideDisc, oilMat);
+    lobeA.scale.set(1.15, 1, 0.88);
+    lobeA.position.set(-0.42, 0.02, 0.36);
+    root.add(lobeA);
+
+    const lobeB = new THREE.Mesh(sideDisc, oilMat);
+    lobeB.scale.set(0.92, 1, 1.18);
+    lobeB.position.set(0.45, 0.02, -0.34);
+    root.add(lobeB);
+
+    const ringInnerGeo = trackGeo(new THREE.RingGeometry(0.56, 0.72, 24));
+    ringInnerGeo.rotateX(-Math.PI / 2);
+    const sheen = new THREE.Mesh(ringInnerGeo, sheenMat);
+    sheen.scale.set(1.02, 1, 1.24);
+    sheen.position.set(0, 0.024, 0);
+    root.add(sheen);
+
+    const ringOuterGeo = trackGeo(new THREE.RingGeometry(0.75, 0.85, 24));
+    ringOuterGeo.rotateX(-Math.PI / 2);
+    const edge = new THREE.Mesh(ringOuterGeo, edgeGlowMat);
+    edge.scale.set(1.05, 1, 1.3);
+    edge.position.set(0, 0.024, 0);
+    root.add(edge);
+  } else {
+    // High-contrast road spike strip with chrome pyramidal caltrops & crimson warning caps
+    const warnTex = createSpikeWarningTexture();
+    textures.push(warnTex);
+
+    const baseMat = trackMat(
+      new THREE.MeshStandardMaterial({
+        map: warnTex,
+        roughness: 0.45,
+        metalness: 0.3,
+      })
+    );
+    const steelMat = trackMat(
+      new THREE.MeshStandardMaterial({
+        color: 0xf1f5f9,
+        emissive: new THREE.Color(0x334155),
+        emissiveIntensity: 0.2,
+        metalness: 0.92,
+        roughness: 0.16,
+      })
+    );
+    const capMat = trackMat(
+      new THREE.MeshStandardMaterial({
+        color: 0xef4444,
+        emissive: new THREE.Color(0xdc2626),
+        emissiveIntensity: 1.4,
+        roughness: 0.25,
+      })
+    );
+
+    const barGeo = trackGeo(new THREE.BoxGeometry(1.76, 0.075, 0.36));
+    const bar = new THREE.Mesh(barGeo, baseMat);
+    bar.position.set(0, 0.038, 0);
+    root.add(bar);
+
+    const capGeo = trackGeo(new THREE.BoxGeometry(0.14, 0.12, 0.42));
+    for (const side of [-1, 1]) {
+      const cap = new THREE.Mesh(capGeo, capMat);
+      cap.position.set(side * 0.89, 0.06, 0);
+      root.add(cap);
+    }
+
+    const coneGeo = trackGeo(new THREE.ConeGeometry(0.085, 0.26, 4));
+    coneGeo.rotateY(Math.PI / 4);
+    for (let i = 0; i < 6; i++) {
+      const x = -0.68 + i * 0.272;
+      const spike = new THREE.Mesh(coneGeo, steelMat);
+      spike.position.set(x, 0.20, 0);
+      root.add(spike);
+    }
+  }
+
+  return {
+    root,
+    kind,
+    dispose: () => {
+      for (const g of geometries) g.dispose();
+      for (const m of materials) m.dispose();
+      for (const t of textures) t.dispose();
+    },
+  };
+}
+

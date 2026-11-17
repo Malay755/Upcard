@@ -16,6 +16,36 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   return data as T;
 }
 
+function readStoredIdList(storageKey: string): string[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = window.localStorage.getItem(storageKey);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function appendStoredId(storageKey: string, roomId: string): void {
+  if (typeof window === 'undefined' || !roomId) return;
+  try {
+    const existing = readStoredIdList(storageKey).filter((id) => id !== roomId);
+    existing.push(roomId);
+    window.localStorage.setItem(storageKey, JSON.stringify(existing.slice(-50)));
+  } catch {
+    /* Ignore storage quota errors in restricted WebViews. */
+  }
+}
+
+const getSeenWinnerKey = (userId: string) => `farm_seen_battle_winner:${userId || 'guest'}`;
+const getDismissedRoomKey = (userId: string) => `farm_dismissed_battle_room:${userId || 'guest'}`;
+
+const hasSeenBattleWinner = (userId: string, roomId: string) => readStoredIdList(getSeenWinnerKey(userId)).includes(roomId);
+const markBattleWinnerSeen = (userId: string, roomId: string) => appendStoredId(getSeenWinnerKey(userId), roomId);
+const hasDismissedBattleRoom = (userId: string, roomId: string) => readStoredIdList(getDismissedRoomKey(userId)).includes(roomId);
+const markBattleRoomDismissed = (userId: string, roomId: string) => appendStoredId(getDismissedRoomKey(userId), roomId);
+
 interface Props {
   user: UserProfile;
   items: ItemCard[];
@@ -60,9 +90,12 @@ export const BattlesView: React.FC<Props> = ({
   const [busyActionId, setBusyActionId] = useState<string | null>(null);
   const [winnerDismissed, setWinnerDismissed] = useState(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const [passwordPromptRoom, setPasswordPromptRoom] = useState<BattleRoomSummary | null>(null);
+  const [passwordPromptInput, setPasswordPromptInput] = useState('');
 
   const playbackOriginByRoomRef = useRef<Map<string, number>>(new Map());
   const dismissedCompletedRoomsRef = useRef<Set<string>>(new Set());
+  const roomFetchSeqRef = useRef(0);
 
   const syncPlaybackOrigin = useCallback((room: BattleRoomSummary | null) => {
     if (!room || room.status !== 'completed' || !room.startedAt) return;
@@ -72,6 +105,20 @@ export const BattlesView: React.FC<Props> = ({
     const origin = age >= -500 && age < 2500 ? Math.max(room.startedAt, Date.now() + 140) : room.startedAt;
     playbackOriginByRoomRef.current.set(room.id, origin);
   }, []);
+
+  const mergeActiveRoom = useCallback(
+    (next: BattleRoomSummary | null) => {
+      syncPlaybackOrigin(next);
+      setActiveRoom((prev) => {
+        if (!next) return null;
+        if (prev && prev.id === next.id && prev.status === 'completed' && next.status === 'waiting') {
+          return prev;
+        }
+        return next;
+      });
+    },
+    [syncPlaybackOrigin]
+  );
 
   const updateCaseCount = (next: number) => {
     const clamped = Math.min(25, Math.max(1, Math.round(next) || 1));
@@ -100,42 +147,52 @@ export const BattlesView: React.FC<Props> = ({
   useEffect(() => {
     void refreshRooms();
     if (isAuthorized) {
+      void onRefreshPayload?.();
+      const seq = ++roomFetchSeqRef.current;
       void request<{ battle: BattleRoomSummary | null }>('/api/battles/current')
         .then((result) => {
-          if (result.battle && !dismissedCompletedRoomsRef.current.has(result.battle.id)) {
-            syncPlaybackOrigin(result.battle);
-            setActiveRoom(result.battle);
+          if (seq !== roomFetchSeqRef.current) return;
+          const b = result.battle;
+          if (!b) return;
+          if (b.status === 'completed' && (dismissedCompletedRoomsRef.current.has(b.id) || hasDismissedBattleRoom(user.id, b.id))) {
+            return;
           }
+          const alreadyShown = b.status === 'completed' && hasSeenBattleWinner(user.id, b.id);
+          setWinnerDismissed(alreadyShown);
+          mergeActiveRoom(b);
         })
         .catch(() => undefined);
     }
     const timer = window.setInterval(refreshRooms, 2500);
     return () => window.clearInterval(timer);
-  }, [isAuthorized, refreshRooms, syncPlaybackOrigin]);
+  }, [isAuthorized, user.id, refreshRooms, mergeActiveRoom, onRefreshPayload]);
 
   // Trigger immediate room & activeRoom sync whenever WebSocket emits battle events
   useEffect(() => {
     if (battleSyncKey <= 0) return;
     void refreshRooms();
     if (activeRoom?.id && activeRoom.status === 'waiting') {
+      const seq = ++roomFetchSeqRef.current;
       void request<{ battle: BattleRoomSummary }>(`/api/battles/${encodeURIComponent(activeRoom.id)}`)
         .then((res) => {
-          syncPlaybackOrigin(res.battle);
-          setActiveRoom(res.battle);
+          if (seq !== roomFetchSeqRef.current) return;
+          mergeActiveRoom(res.battle);
         })
         .catch(() => undefined);
     }
-  }, [battleSyncKey, activeRoom?.id, activeRoom?.status, refreshRooms, syncPlaybackOrigin]);
+  }, [battleSyncKey, activeRoom?.id, activeRoom?.status, refreshRooms, mergeActiveRoom]);
 
   // Poll waiting active room for opponent join
   useEffect(() => {
     if (!activeRoom || activeRoom.status !== 'waiting') return;
     const update = async () => {
+      const seq = ++roomFetchSeqRef.current;
       try {
         const result = await request<{ battle: BattleRoomSummary }>(`/api/battles/${encodeURIComponent(activeRoom.id)}`);
-        syncPlaybackOrigin(result.battle);
-        setActiveRoom(result.battle);
+        if (seq !== roomFetchSeqRef.current) return;
+        mergeActiveRoom(result.battle);
       } catch (e) {
+        if (seq !== roomFetchSeqRef.current) return;
         setError(e instanceof Error ? e.message : 'Комната недоступна.');
         setActiveRoom(null);
       }
@@ -143,7 +200,7 @@ export const BattlesView: React.FC<Props> = ({
     void update();
     const timer = window.setInterval(update, 900);
     return () => window.clearInterval(timer);
-  }, [activeRoom?.id, activeRoom?.status, syncPlaybackOrigin]);
+  }, [activeRoom?.id, activeRoom?.status, mergeActiveRoom]);
 
   // Lightweight playback ticker ONLY while completed battle rounds are actively animating
   useEffect(() => {
@@ -167,8 +224,12 @@ export const BattlesView: React.FC<Props> = ({
   }, [activeRoom?.id, activeRoom?.status, activeRoom?.durationMs, activeRoom?.startedAt, syncPlaybackOrigin]);
 
   useEffect(() => {
-    setWinnerDismissed(false);
-  }, [activeRoom?.id]);
+    if (!activeRoom?.id) {
+      setWinnerDismissed(false);
+      return;
+    }
+    setWinnerDismissed(activeRoom.status === 'completed' && hasSeenBattleWinner(user.id, activeRoom.id));
+  }, [activeRoom?.id, activeRoom?.status, user.id]);
 
   // Pre-decode all card images in active case drop pool while waiting/starting so reels never decode PNGs mid-frame
   const activeCase = cases.find((box) => box.id === activeRoom?.caseId);
@@ -207,8 +268,8 @@ export const BattlesView: React.FC<Props> = ({
         method: 'POST',
         body: JSON.stringify({ mode, caseId, caseCount, password, stakeItemIds: selectedIds }),
       });
-      syncPlaybackOrigin(result.battle);
-      setActiveRoom(result.battle);
+      roomFetchSeqRef.current += 1;
+      mergeActiveRoom(result.battle);
       setPassword('');
       setSelectedIds([]);
       onPayload(result.payload);
@@ -219,6 +280,7 @@ export const BattlesView: React.FC<Props> = ({
     if (room.mode === 'upgrade' && selectedIds.length === 0) {
       if (activeRoom?.status === 'completed') {
         dismissedCompletedRoomsRef.current.add(activeRoom.id);
+        markBattleRoomDismissed(user.id, activeRoom.id);
         setActiveRoom(null);
       }
       setMode('upgrade');
@@ -238,9 +300,9 @@ export const BattlesView: React.FC<Props> = ({
           method: 'POST',
           body: JSON.stringify({ password: roomPassword, stakeItemIds: selectedIds }),
         });
-        syncPlaybackOrigin(result.battle);
+        roomFetchSeqRef.current += 1;
         onPayload(result.payload);
-        setActiveRoom(result.battle);
+        mergeActiveRoom(result.battle);
         setSelectedIds([]);
         await refreshRooms();
       } catch (err) {
@@ -252,9 +314,14 @@ export const BattlesView: React.FC<Props> = ({
   };
 
   const acceptInvite = (invite: BattleInvitationSummary) => {
+    if (activeRoom?.status === 'waiting') {
+      setError('Сначала отмени свою ожидающую комнату, чтобы принять другое приглашение.');
+      return;
+    }
     if (invite.mode === 'upgrade' && selectedIds.length === 0) {
       if (activeRoom?.status === 'completed') {
         dismissedCompletedRoomsRef.current.add(activeRoom.id);
+        markBattleRoomDismissed(user.id, activeRoom.id);
         setActiveRoom(null);
       }
       setMode('upgrade');
@@ -276,9 +343,9 @@ export const BattlesView: React.FC<Props> = ({
           method: 'POST',
           body: JSON.stringify({ stakeItemIds: selectedIds }),
         });
-        syncPlaybackOrigin(result.battle);
+        roomFetchSeqRef.current += 1;
+        mergeActiveRoom(result.battle);
         onPayload(result.payload);
-        setActiveRoom(result.battle);
         setSelectedIds([]);
         await refreshRooms();
       } catch (err) {
@@ -299,6 +366,7 @@ export const BattlesView: React.FC<Props> = ({
     activeRoom &&
     run('cancel', async () => {
       const result = await request<{ payload: BootstrapPayload }>(`/api/battles/${encodeURIComponent(activeRoom.id)}`, { method: 'DELETE' });
+      roomFetchSeqRef.current += 1;
       onPayload(result.payload);
       setActiveRoom(null);
       await refreshRooms();
@@ -311,6 +379,7 @@ export const BattlesView: React.FC<Props> = ({
         method: 'POST',
         body: JSON.stringify({ friendId: inviteFriendId }),
       });
+      setInviteFriendId('');
       setNotice('Приглашение отправлено.');
     });
 
@@ -339,9 +408,12 @@ export const BattlesView: React.FC<Props> = ({
       joinRoom(room, '');
       return;
     }
-    const secret = room.hasPassword ? window.prompt('Пароль комнаты') : '';
-    if (secret === null) return;
-    joinRoom(room, secret ?? '');
+    if (room.hasPassword) {
+      setPasswordPromptInput('');
+      setPasswordPromptRoom(room);
+      return;
+    }
+    joinRoom(room, '');
   };
 
   const playbackStartedAt = activeRoom
@@ -362,6 +434,12 @@ export const BattlesView: React.FC<Props> = ({
     .map((entry) => items.find((item) => item.id === entry.itemId))
     .filter((item): item is ItemCard => Boolean(item));
   const topBattleReward = rewardItems.sort((a, b) => b.price - a.price)[0];
+
+  useEffect(() => {
+    if (activeRoom?.id && activeRoom.status === 'completed' && progress >= 1) {
+      markBattleWinnerSeen(user.id, activeRoom.id);
+    }
+  }, [activeRoom?.id, activeRoom?.status, progress, user.id]);
 
   if (!isAuthorized) {
     return (
@@ -467,6 +545,8 @@ export const BattlesView: React.FC<Props> = ({
                   type="button"
                   onClick={() => {
                     dismissedCompletedRoomsRef.current.add(activeRoom.id);
+                    markBattleWinnerSeen(user.id, activeRoom.id);
+                    markBattleRoomDismissed(user.id, activeRoom.id);
                     setActiveRoom(null);
                     void refreshRooms();
                   }}
@@ -776,6 +856,58 @@ export const BattlesView: React.FC<Props> = ({
         )}
       </div>
 
+      {passwordPromptRoom && (
+        <div role="dialog" aria-modal="true" aria-labelledby="room-password-title" className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              const target = passwordPromptRoom;
+              const entered = passwordPromptInput;
+              setPasswordPromptRoom(null);
+              setPasswordPromptInput('');
+              joinRoom(target, entered);
+            }}
+            className="w-full max-w-sm space-y-4 rounded-2xl border border-white/10 bg-[#14161A] p-5 shadow-2xl"
+          >
+            <div>
+              <h3 id="room-password-title" className="text-base font-bold text-white">Вход по паролю</h3>
+              <p className="mt-1 text-xs text-slate-400">
+                Комната игрока {passwordPromptRoom.hostUsername}
+              </p>
+            </div>
+            <input
+              type="password"
+              autoFocus
+              value={passwordPromptInput}
+              onChange={(event) => setPasswordPromptInput(event.target.value)}
+              placeholder="Введите пароль комнаты"
+              aria-label="Пароль комнаты"
+              maxLength={64}
+              className="w-full rounded-xl border border-white/10 bg-[#0D0F12] px-3 py-2.5 text-sm text-white outline-none focus:border-amber-300/60"
+            />
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setPasswordPromptRoom(null);
+                  setPasswordPromptInput('');
+                }}
+                className="rounded-lg border border-white/10 px-3.5 py-2 text-xs font-semibold text-slate-300 hover:bg-white/5 cursor-pointer"
+              >
+                Отмена
+              </button>
+              <button
+                type="submit"
+                disabled={!passwordPromptInput.trim()}
+                className="rounded-lg bg-amber-400 px-4 py-2 text-xs font-bold text-slate-950 hover:bg-amber-300 disabled:opacity-40 cursor-pointer"
+              >
+                Войти в батл
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
       {activeRoom?.status === 'completed' && progress >= 1 && !winnerDismissed && (
         <BattleWinnerOverlay
           winner={winner}
@@ -785,7 +917,10 @@ export const BattlesView: React.FC<Props> = ({
           isDraw={!activeRoom.winnerUserId}
           caseBattle={activeRoom.mode === 'cases'}
           prizeValue={activeRoom.hostStakeValue + activeRoom.guestStakeValue}
-          onClose={() => setWinnerDismissed(true)}
+          onClose={() => {
+            markBattleWinnerSeen(user.id, activeRoom.id);
+            setWinnerDismissed(true);
+          }}
         />
       )}
     </>

@@ -3,7 +3,6 @@ import { ArrowRight, Flame, RefreshCw, Sparkles, Trash2, Wand2, X } from 'lucide
 import type { InventoryItem, ItemCard, Rarity, UserProfile } from '../types';
 import { resolveAssetUrl } from '../utils/assets';
 import { useCleanCardImage } from '../utils/cardCutout';
-import { getCollectionTextClass, resolveCardCollection } from '../utils/collections';
 import {
   CONTRACT_REQUIRED_COUNT,
   buildContractPreview,
@@ -76,47 +75,6 @@ const CONTRACT_FILTER_TABS: { id: 'all' | 'rare' | 'super_rare' | 'epic'; label:
   { id: 'super_rare', label: 'Сверхредкая' },
   { id: 'epic', label: 'Эпическая' },
 ];
-
-const OutcomeCardRow: React.FC<{ item: ItemCard; probability: number }> = ({ item, probability }) => {
-  const { displayUrl } = useCleanCardImage(resolveAssetUrl(item.imageUrl));
-  const accent = RARITY_ACCENT[item.rarity];
-  const collection = resolveCardCollection(item);
-
-  return (
-    <div
-      className={`relative rounded-xl border ${accent.border} bg-[#0D0F12] p-2.5 flex items-center gap-3 overflow-hidden`}
-    >
-      <span aria-hidden="true" className={`absolute left-0 inset-y-0 w-[3px] ${accent.bar}`} />
-      <div className="w-12 h-14 shrink-0 flex items-center justify-center bg-[#14161A] rounded-lg border border-white/[0.05]">
-        {displayUrl && (
-          <img
-            src={displayUrl}
-            alt={item.name}
-            referrerPolicy="no-referrer"
-            draggable={false}
-            className="max-h-12 w-auto object-contain"
-          />
-        )}
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="text-xs font-bold text-white truncate">{item.name}</div>
-        <div className="flex items-center gap-2 text-[10px] mt-0.5">
-          <span className={accent.text}>{RARITY_LABELS[item.rarity]}</span>
-          <span className={`truncate ${getCollectionTextClass(collection)}`}>{collection}</span>
-        </div>
-        <div className="text-[11px] font-mono-num font-semibold text-[#FACC15] mt-0.5">
-          {formatTC(item.price)} TC
-        </div>
-      </div>
-      <div className="text-right shrink-0">
-        <div className="text-xs font-mono-num font-extrabold text-white">
-          {probability.toFixed(1)}%
-        </div>
-        <div className="text-[10px] text-slate-500">шанс</div>
-      </div>
-    </div>
-  );
-};
 
 const SlotMiniCard: React.FC<{ item: ItemCard; index: number; onRemove: () => void; disabled?: boolean }> = ({
   item,
@@ -230,20 +188,6 @@ export const ContractWorkbench: React.FC<ContractWorkbenchProps> = ({
     );
   }, [ownedEntries, rarityFilter]);
 
-  // Default preview target rarity if no cards are placed yet (based on active filter or 'rare' -> 'super_rare')
-  const previewFallbackTarget = useMemo(() => {
-    if (preview.targetRarity) return preview.targetRarity;
-    const baseRarity: Rarity =
-      rarityFilter !== 'all' ? rarityFilter : 'rare';
-    return getNextContractRarity(baseRarity);
-  }, [preview.targetRarity, rarityFilter]);
-
-  const displayedOutcomes = useMemo(() => {
-    if (preview.targetPool.length > 0) return preview.targetPool;
-    if (!previewFallbackTarget) return [];
-    return calculateContractOutcomes(previewFallbackTarget, items);
-  }, [preview.targetPool, previewFallbackTarget, items]);
-
   const handleToggleCard = (instanceId: string, card: ItemCard) => {
     if (isCrafting || !isAuthorized) return;
     setError('');
@@ -340,10 +284,8 @@ export const ContractWorkbench: React.FC<ContractWorkbenchProps> = ({
         </h1>
       </div>
 
-      {/* Top Stage: 7-Slot Forge + Outcome Preview */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-stretch">
-        {/* Left: 7-Slot Contract Table */}
-        <section className="lg:col-span-7 bg-[#14161A] border border-white/[0.06] rounded-xl p-5 flex flex-col justify-between space-y-4">
+      {/* Top Stage: 7-Slot Contract Table */}
+      <section className="bg-[#14161A] border border-white/[0.06] rounded-xl p-5 flex flex-col justify-between space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
               <h2 className="text-sm font-display font-bold text-white flex items-center gap-2">
@@ -503,49 +445,7 @@ export const ContractWorkbench: React.FC<ContractWorkbenchProps> = ({
               )}
             </button>
           </div>
-        </section>
-
-        {/* Right: Transparent Target Pool & Odds */}
-        <section className="lg:col-span-5 bg-[#14161A] border border-white/[0.06] rounded-xl p-5 flex flex-col space-y-3">
-          <div className="flex items-center justify-between gap-2">
-            <div>
-              <h3 className="text-sm font-display font-bold text-white">
-                Возможный дроп контракта
-              </h3>
-              <p className="text-[11px] text-slate-400">
-                {previewFallbackTarget
-                  ? `Целевая редкость: ${RARITY_LABELS[previewFallbackTarget]}`
-                  : 'Выберите редкость слева'}
-              </p>
-            </div>
-            {displayedOutcomes.length > 0 && (
-              <div className="text-right text-[11px] font-mono-num">
-                <div className="text-slate-400">Диапазон</div>
-                <div className="text-[#FACC15] font-bold">
-                  {formatTC(displayedOutcomes[0].item.price)} –{' '}
-                  {formatTC(displayedOutcomes[displayedOutcomes.length - 1].item.price)} TC
-                </div>
-              </div>
-            )}
-          </div>
-
-          {displayedOutcomes.length === 0 ? (
-            <div className="flex-1 flex items-center justify-center text-xs text-slate-500 border border-dashed border-white/[0.08] rounded-xl py-10">
-              Нет доступных карт следующей редкости
-            </div>
-          ) : (
-            <div className="space-y-2 max-h-[340px] overflow-y-auto pr-1">
-              {displayedOutcomes.map((outcome) => (
-                <OutcomeCardRow
-                  key={outcome.item.id}
-                  item={outcome.item}
-                  probability={outcome.probability}
-                />
-              ))}
-            </div>
-          )}
-        </section>
-      </div>
+      </section>
 
       {/* Bottom Inventory Selector */}
       <section className="bg-[#14161A] border border-white/[0.06] rounded-xl p-5 space-y-4">

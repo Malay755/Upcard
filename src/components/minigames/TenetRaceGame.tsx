@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { ArrowLeft, ArrowRight, Flame, Heart, OctagonAlert, Play, RotateCcw, Trophy, Zap } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Heart, OctagonAlert, Play, RotateCcw, Trophy, Zap } from 'lucide-react';
 import tenetRiderCover from '../../assets/images/tenet_rider_cover_1794862143521.jpg';
 import type { MinigameEnergySlot } from '../../types';
 import { detectSoftwareWebGL } from '../../utils/caseModel3D';
@@ -9,9 +9,12 @@ import { formatTC } from '../../utils/economics';
 import { soundFX } from '../../utils/sound';
 import {
   buildGoldCoinMesh,
+  buildRoadHazardMesh,
   buildTenetT4Group,
   buildTrafficVehicle,
   type GoldCoinRig,
+  type RoadHazardKind,
+  type RoadHazardRig,
   type TrafficVehicleKind,
   type TrafficVehicleRig,
 } from '../../utils/tenetCar3D';
@@ -51,11 +54,29 @@ interface ActiveCoin {
   collected: boolean;
 }
 
+interface ActiveHazard {
+  id: number;
+  kind: RoadHazardKind;
+  lane: number;
+  z: number;
+  rig: RoadHazardRig;
+  hit: boolean;
+}
+
 const LANE_CENTERS = [-3.15, -1.05, 1.05, 3.15] as const;
 const ROAD_WIDTH = 9.4;
 const ROAD_SPAN_Z = 220;
 const LAMP_PAIRS = 14;
 const LAMP_SPACING = 16;
+
+// Auto-escalating speed targets across the 25s run (world units/sec -> ~95 to ~202 km/h)
+const SPEED_STAGES = [
+  { atMs: 0, speed: 26.5, label: 'СТАРТ' },
+  { atMs: 5000, speed: 33.5, label: 'РАЗГОН' },
+  { atMs: 10000, speed: 40.5, label: 'ФОРСАЖ' },
+  { atMs: 15000, speed: 48.0, label: 'ЭКСТРИМ' },
+  { atMs: 20000, speed: 56.0, label: 'ПРЕДЕЛ' },
+] as const;
 
 // Module-scope reusable scratch math helpers (Zero-GC render loop)
 const _mat4 = new THREE.Matrix4();
@@ -116,9 +137,10 @@ export const TenetRaceGame: React.FC<TenetRaceGameProps> = ({
   const [coins, setCoins] = useState(0);
   const [nearMisses, setNearMisses] = useState(0);
   const [distance, setDistance] = useState(0);
-  const [speedKmh, setSpeedKmh] = useState(110);
+  const [speedKmh, setSpeedKmh] = useState(95);
+  const [speedStage, setSpeedStage] = useState(1);
   const [timeLeftMs, setTimeLeftMs] = useState(25_000);
-  const [nearMissBanner, setNearMissBanner] = useState<string | null>(null);
+  const [calloutBanner, setCalloutBanner] = useState<{ text: string; tone: 'cyan' | 'amber' | 'rose' } | null>(null);
   const [busy, setBusy] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [finalReward, setFinalReward] = useState<number | null>(null);
@@ -129,7 +151,6 @@ export const TenetRaceGame: React.FC<TenetRaceGameProps> = ({
   const sessionIdRef = useRef<string | null>(null);
   const durationMsRef = useRef(25_000);
   const targetLaneRef = useRef<number>(1);
-  const gasHeldRef = useRef(false);
   const brakeHeldRef = useRef(false);
   const finishingRef = useRef(false);
   const coinsRef = useRef(0);
@@ -148,16 +169,15 @@ export const TenetRaceGame: React.FC<TenetRaceGameProps> = ({
     }
   }, []);
 
-  const triggerNearMissBanner = useCallback((comboCount: number) => {
-    setNearMissBanner(`ОБГОН x${comboCount} +15 TC`);
+  const triggerCallout = useCallback((text: string, tone: 'cyan' | 'amber' | 'rose', durationMs = 1050) => {
+    setCalloutBanner({ text, tone });
     if (bannerTimerRef.current !== null) window.clearTimeout(bannerTimerRef.current);
-    bannerTimerRef.current = window.setTimeout(() => setNearMissBanner(null), 950);
+    bannerTimerRef.current = window.setTimeout(() => setCalloutBanner(null), durationMs);
   }, []);
 
   const finishRace = useCallback(async (survived: boolean) => {
     if (finishingRef.current) return;
     finishingRef.current = true;
-    gasHeldRef.current = false;
     brakeHeldRef.current = false;
 
     const sid = sessionIdRef.current;
@@ -209,7 +229,6 @@ export const TenetRaceGame: React.FC<TenetRaceGameProps> = ({
       sessionIdRef.current = started.sessionId;
       durationMsRef.current = Math.max(25_000, started.durationMs);
       targetLaneRef.current = 1;
-      gasHeldRef.current = false;
       brakeHeldRef.current = false;
       finishingRef.current = false;
       coinsRef.current = 0;
@@ -221,8 +240,9 @@ export const TenetRaceGame: React.FC<TenetRaceGameProps> = ({
       setCoins(0);
       setNearMisses(0);
       setDistance(0);
-      setSpeedKmh(110);
-      setNearMissBanner(null);
+      setSpeedKmh(95);
+      setSpeedStage(1);
+      setCalloutBanner(null);
       setFinalReward(null);
       setTimeLeftMs(durationMsRef.current);
       setPhase('PLAYING');
@@ -240,7 +260,7 @@ export const TenetRaceGame: React.FC<TenetRaceGameProps> = ({
     };
   }, []);
 
-  // Keyboard controls (WASD / Arrow keys + Russian layout keys) + blur safety release
+  // Keyboard controls (A/D / Left/Right lanes, S/Down tactical brake) + blur safety release
   useEffect(() => {
     if (phase !== 'PLAYING') return;
 
@@ -252,9 +272,6 @@ export const TenetRaceGame: React.FC<TenetRaceGameProps> = ({
       } else if (k === 'arrowright' || k === 'd' || k === 'в') {
         e.preventDefault();
         if (!e.repeat) moveLane(1);
-      } else if (k === 'arrowup' || k === 'w' || k === 'ц') {
-        e.preventDefault();
-        gasHeldRef.current = true;
       } else if (k === 'arrowdown' || k === 's' || k === 'ы') {
         e.preventDefault();
         brakeHeldRef.current = true;
@@ -263,15 +280,12 @@ export const TenetRaceGame: React.FC<TenetRaceGameProps> = ({
 
     const onKeyUp = (e: KeyboardEvent) => {
       const k = e.key.toLowerCase();
-      if (k === 'arrowup' || k === 'w' || k === 'ц') {
-        gasHeldRef.current = false;
-      } else if (k === 'arrowdown' || k === 's' || k === 'ы') {
+      if (k === 'arrowdown' || k === 's' || k === 'ы') {
         brakeHeldRef.current = false;
       }
     };
 
     const resetHeld = () => {
-      gasHeldRef.current = false;
       brakeHeldRef.current = false;
     };
 
@@ -324,7 +338,7 @@ export const TenetRaceGame: React.FC<TenetRaceGameProps> = ({
     const scene = new THREE.Scene();
     const skyColor = new THREE.Color(0x090d16);
     scene.background = skyColor;
-    scene.fog = new THREE.FogExp2(0x090d16, 0.0115);
+    scene.fog = new THREE.FogExp2(0x090d16, 0.0085);
 
     const camera = new THREE.PerspectiveCamera(62, width / height, 0.2, 240);
     camera.position.set(LANE_CENTERS[1], 2.75, 5.8);
@@ -464,17 +478,41 @@ export const TenetRaceGame: React.FC<TenetRaceGameProps> = ({
     let hudSyncAt = 0;
     let currentX: number = LANE_CENTERS[1];
     let prevX: number = currentX;
-    let currentSpeed = 30.5; // world units/sec (~110 km/h)
+    let currentSpeed: number = SPEED_STAGES[0].speed; // Auto-escalating base speed (~95 km/h -> 202 km/h)
+    let lastStageIdx = 0;
     let cameraTrauma = 0;
     let invulnUntil = 0;
-    let spawnCooldown = 0.7;
-    let coinCooldown = 0.9;
+    let spawnCooldown = 0.25;
+    let hazardCooldown = 0.45;
+    let coinCooldown = 0.2;
     let seq = 1;
     let lampTravel = 0;
 
     const trafficList: ActiveTraffic[] = [];
     const coinList: ActiveCoin[] = [];
+    const hazardList: ActiveHazard[] = [];
     const trafficKinds: TrafficVehicleKind[] = ['sedan', 'taxi', 'suv', 'van'];
+
+    // Seed immediate downrange highway life (clear of starting lane 1) so frame 1 is vibrant
+    const initCarRig = buildTrafficVehicle('suv');
+    initCarRig.root.position.set(LANE_CENTERS[2], 0, -56);
+    scene.add(initCarRig.root);
+    trafficList.push({ id: seq++, lane: 2, z: -56, speedWorld: 14.5, rig: initCarRig, overtaken: false, hit: false });
+
+    const initHazardRig = buildRoadHazardMesh('spikes');
+    initHazardRig.root.position.set(LANE_CENTERS[0], 0, -40);
+    scene.add(initHazardRig.root);
+    hazardList.push({ id: seq++, kind: 'spikes', lane: 0, z: -40, rig: initHazardRig, hit: false });
+
+    const initOilRig = buildRoadHazardMesh('oil');
+    initOilRig.root.position.set(LANE_CENTERS[3], 0, -64);
+    scene.add(initOilRig.root);
+    hazardList.push({ id: seq++, kind: 'oil', lane: 3, z: -64, rig: initOilRig, hit: false });
+
+    const initCoinRig = buildGoldCoinMesh(maxAniso);
+    initCoinRig.root.position.set(LANE_CENTERS[1], 0, -34);
+    scene.add(initCoinRig.root);
+    coinList.push({ id: seq++, lane: 1, z: -34, rig: initCoinRig, collected: false });
 
     const updateLamps = (offset: number) => {
       let idx = 0;
@@ -530,7 +568,7 @@ export const TenetRaceGame: React.FC<TenetRaceGameProps> = ({
     const afterDraw = (cb: () => void) => {
       const gl = renderer.getContext() as WebGL2RenderingContext;
       if (!gl || !gl.fenceSync) {
-        frameId = window.setTimeout(cb, 20);
+        frameId = window.setTimeout(cb, 12);
         return;
       }
       const sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
@@ -545,7 +583,7 @@ export const TenetRaceGame: React.FC<TenetRaceGameProps> = ({
           frameId = window.setTimeout(poll, 4);
         } else {
           if (sync) gl.deleteSync(sync);
-          frameId = window.setTimeout(cb, 42);
+          frameId = window.setTimeout(cb, 8);
         }
       };
       frameId = window.setTimeout(poll, 4);
@@ -562,22 +600,42 @@ export const TenetRaceGame: React.FC<TenetRaceGameProps> = ({
         c.rig.dispose();
       }
       coinList.length = 0;
+      for (const h of hazardList) {
+        scene.remove(h.rig.root);
+        h.rig.dispose();
+      }
+      hazardList.length = 0;
     };
 
     const tick = () => {
       if (disposed) return;
       const now = performance.now();
-      const dt = Math.min(0.05, Math.max(0.001, (now - lastTime) / 1000));
+      const dt = Math.min(isSoftwareGl ? 0.16 : 0.05, Math.max(0.001, (now - lastTime) / 1000));
       lastTime = now;
 
       const elapsed = now - simStart;
       const remaining = Math.max(0, durationMsRef.current - elapsed);
 
-      // Speed control (Traffic Rider Gas vs Brake vs Cruise)
-      const isGassing = gasHeldRef.current && !brakeHeldRef.current;
+      // Escalating speed stages over elapsed time (no manual Nitro; only tactical Brake)
+      let stageIdx = 0;
+      for (let s = SPEED_STAGES.length - 1; s >= 0; s--) {
+        if (elapsed >= SPEED_STAGES[s].atMs) {
+          stageIdx = s;
+          break;
+        }
+      }
+      if (stageIdx > lastStageIdx) {
+        lastStageIdx = stageIdx;
+        setSpeedStage(stageIdx + 1);
+        const stageKmh = Math.round(SPEED_STAGES[stageIdx].speed * 3.6);
+        triggerCallout(`${SPEED_STAGES[stageIdx].label}! ${stageKmh} КМ/Ч`, 'amber', 1350);
+        soundFX.playCaseTick(0.42);
+      }
+
+      const stageBaseSpeed = SPEED_STAGES[stageIdx].speed;
       const isBraking = brakeHeldRef.current;
-      const targetSpeed = isBraking ? 17.5 : isGassing ? 51.5 : 31.0;
-      currentSpeed = THREE.MathUtils.damp(currentSpeed, targetSpeed, isBraking ? 6.5 : 4.2, dt);
+      const targetSpeed = isBraking ? Math.max(19.0, stageBaseSpeed * 0.56) : stageBaseSpeed;
+      currentSpeed = THREE.MathUtils.damp(currentSpeed, targetSpeed, isBraking ? 6.5 : 3.6, dt);
 
       const kmh = Math.round(currentSpeed * 3.6);
       const stepWorld = currentSpeed * dt;
@@ -597,11 +655,11 @@ export const TenetRaceGame: React.FC<TenetRaceGameProps> = ({
       playerRig.root.position.x = currentX;
       playerRig.spinWheels(stepWorld);
       playerRig.setBraking(isBraking ? 1 : 0);
-      playerRig.setNitro(isGassing ? 1 : 0);
+      playerRig.setNitro(0);
       playerRig.setSteer(
         THREE.MathUtils.clamp(-lateralVel * 0.035, -0.32, 0.32),
         THREE.MathUtils.clamp(-lateralVel * 0.011, -0.09, 0.09),
-        isBraking ? -0.032 : isGassing ? 0.022 : 0
+        isBraking ? -0.032 : stageIdx >= 2 ? 0.016 : 0
       );
 
       // Invulnerability flicker after impact
@@ -611,9 +669,10 @@ export const TenetRaceGame: React.FC<TenetRaceGameProps> = ({
         playerRig.root.visible = true;
       }
 
-      // Camera smooth chase + speed FOV surge + trauma shake
-      const targetFov = isBraking ? 56 : isGassing ? 76 : 63;
-      camera.fov = THREE.MathUtils.damp(camera.fov, targetFov, 5.5, dt);
+      // Camera smooth chase + speed-proportional FOV surge + trauma shake
+      const speedNorm = THREE.MathUtils.clamp((currentSpeed - 24) / 34, 0, 1);
+      const targetFov = isBraking ? 56 : THREE.MathUtils.lerp(60, 77, speedNorm);
+      camera.fov = THREE.MathUtils.damp(camera.fov, targetFov, 5.0, dt);
       camera.updateProjectionMatrix();
 
       cameraTrauma = Math.max(0, cameraTrauma - dt * 1.9);
@@ -622,25 +681,32 @@ export const TenetRaceGame: React.FC<TenetRaceGameProps> = ({
       const shakeY = Math.cos(now * 0.059) * 0.5 * shakeMag;
 
       camera.position.x = THREE.MathUtils.damp(camera.position.x, currentX * 0.72, 7.5, dt) + shakeX;
-      camera.position.y = THREE.MathUtils.damp(camera.position.y, isGassing ? 2.52 : 2.75, 5, dt) + shakeY;
+      camera.position.y = THREE.MathUtils.damp(camera.position.y, THREE.MathUtils.lerp(2.75, 2.52, speedNorm), 5, dt) + shakeY;
       camera.lookAt(currentX * 0.45, 0.92, -18);
 
-      // Spawn Traffic Waves safely (always leave >= 1 passable lane; clear opening ~1.8s at start)
+      // Spawn Traffic Waves safely (always leave >= 1 passable lane; brisk opening sightline)
       spawnCooldown -= dt;
-      if (spawnCooldown <= 0 && elapsed > 1200) {
-        const waveCount = elapsed > 12000 && Math.random() < 0.45 ? 2 : 1;
+      if (spawnCooldown <= 0 && elapsed > 350) {
+        const waveCount = elapsed > 9000 && Math.random() < 0.52 ? 2 : 1;
         const usedLanes = new Set<number>();
         for (let w = 0; w < waveCount; w++) {
           const lane = Math.floor(Math.random() * 4);
           if (usedLanes.has(lane)) continue;
-          // Ensure lane doesn't overlap an already nearby traffic car at spawn z
-          const blockedNearby = trafficList.some((t) => t.lane === lane && t.z < -85);
+          const blockedNearby =
+            trafficList.some((t) => t.lane === lane && t.z < -62) ||
+            hazardList.some((h) => h.lane === lane && h.z < -68);
           if (blockedNearby) continue;
+
+          // Guarantee >= 1 lane remains passable across the spawn window
+          const occupiedZoneLanes = new Set<number>();
+          for (const t of trafficList) if (t.z < -66) occupiedZoneLanes.add(t.lane);
+          for (const h of hazardList) if (h.z < -66) occupiedZoneLanes.add(h.lane);
+          if (occupiedZoneLanes.size >= 3 && !occupiedZoneLanes.has(lane)) continue;
 
           usedLanes.add(lane);
           const kind = trafficKinds[Math.floor(Math.random() * trafficKinds.length)];
           const rig = buildTrafficVehicle(kind);
-          const spawnZ = -125 - w * (12 + Math.random() * 14);
+          const spawnZ = -88 - w * (11 + Math.random() * 10);
           rig.root.position.set(LANE_CENTERS[lane], 0, spawnZ);
           scene.add(rig.root);
 
@@ -656,24 +722,60 @@ export const TenetRaceGame: React.FC<TenetRaceGameProps> = ({
           });
         }
         const tempo = Math.min(1, elapsed / durationMsRef.current);
-        spawnCooldown = THREE.MathUtils.lerp(1.05, 0.56, tempo) * (isGassing ? 0.78 : 1);
+        spawnCooldown = THREE.MathUtils.lerp(0.95, 0.48, tempo);
       }
 
-      // Spawn Gold Coins along random open lane
+      // Spawn Oil Puddles & Spike Strips cleanly without walling all 4 lanes
+      hazardCooldown -= dt;
+      if (hazardCooldown <= 0 && elapsed > 700) {
+        const hCount = stageIdx >= 2 && Math.random() < 0.42 ? 2 : 1;
+        for (let hi = 0; hi < hCount; hi++) {
+          const lane = Math.floor(Math.random() * 4);
+          const spawnZ = -82 - hi * 12;
+          const overlapTraffic = trafficList.some((t) => t.lane === lane && Math.abs(t.z - spawnZ) < 18);
+          const overlapHazard = hazardList.some((h) => h.lane === lane && Math.abs(h.z - spawnZ) < 15);
+          if (overlapTraffic || overlapHazard) continue;
+
+          const zoneOccupied = new Set<number>();
+          for (const t of trafficList) if (t.z < -58 && t.z > -105) zoneOccupied.add(t.lane);
+          for (const h of hazardList) if (h.z < -58 && h.z > -105) zoneOccupied.add(h.lane);
+          if (zoneOccupied.size >= 3 && !zoneOccupied.has(lane)) continue;
+
+          const kind: RoadHazardKind = Math.random() < 0.5 ? 'oil' : 'spikes';
+          const hRig = buildRoadHazardMesh(kind);
+          hRig.root.position.set(LANE_CENTERS[lane], 0, spawnZ);
+          scene.add(hRig.root);
+          hazardList.push({
+            id: seq++,
+            kind,
+            lane,
+            z: spawnZ,
+            rig: hRig,
+            hit: false,
+          });
+        }
+        const tempo = Math.min(1, elapsed / durationMsRef.current);
+        hazardCooldown = THREE.MathUtils.lerp(1.25, 0.55, tempo);
+      }
+
+      // Spawn Gold Coins along random open lane (avoid placing directly on hazards)
       coinCooldown -= dt;
       if (coinCooldown <= 0) {
         const lane = Math.floor(Math.random() * 4);
-        const coinRig = buildGoldCoinMesh(maxAniso);
-        coinRig.root.position.set(LANE_CENTERS[lane], 0, -122);
-        scene.add(coinRig.root);
-        coinList.push({
-          id: seq++,
-          lane,
-          z: -122,
-          rig: coinRig,
-          collected: false,
-        });
-        coinCooldown = 1.05 + Math.random() * 0.55;
+        const onHazard = hazardList.some((h) => h.lane === lane && h.z < -68);
+        if (!onHazard) {
+          const coinRig = buildGoldCoinMesh(maxAniso);
+          coinRig.root.position.set(LANE_CENTERS[lane], 0, -84);
+          scene.add(coinRig.root);
+          coinList.push({
+            id: seq++,
+            lane,
+            z: -84,
+            rig: coinRig,
+            collected: false,
+          });
+        }
+        coinCooldown = 0.85 + Math.random() * 0.45;
       }
 
       // Update Traffic + Detect Collisions + Traffic Rider Close Overtake!
@@ -697,6 +799,7 @@ export const TenetRaceGame: React.FC<TenetRaceGameProps> = ({
               invulnUntil = now + 1150;
               cameraTrauma = 1.0;
               setHp(hpRef.current);
+              triggerCallout('СТОЛКНОВЕНИЕ! -1 БРОНЯ', 'rose', 1100);
               soundFX.playMiniTrap();
               if (hpRef.current <= 0) {
                 setDistance(Math.round(distanceRef.current));
@@ -708,12 +811,11 @@ export const TenetRaceGame: React.FC<TenetRaceGameProps> = ({
             }
           } else if (!t.overtaken && t.z > 2.3) {
             t.overtaken = true;
-            // Close overtake (same/adjacent lane gap at high speed) awards Near-Miss bonus!
             const latGap = Math.abs(currentX - LANE_CENTERS[t.lane]);
-            if (latGap <= 2.45 && currentSpeed >= 27) {
+            if (latGap <= 2.45 && currentSpeed >= 25) {
               nearMissesRef.current += 1;
               setNearMisses(nearMissesRef.current);
-              triggerNearMissBanner(nearMissesRef.current);
+              triggerCallout(`ОБГОН x${nearMissesRef.current} +15 TC`, 'cyan', 950);
               soundFX.playMiniTap(nearMissesRef.current + 3);
             }
           }
@@ -723,6 +825,46 @@ export const TenetRaceGame: React.FC<TenetRaceGameProps> = ({
           scene.remove(t.rig.root);
           t.rig.dispose();
           trafficList.splice(i, 1);
+        }
+      }
+
+      // Update Oil Puddles & Spike Strips + Collisions
+      for (let i = hazardList.length - 1; i >= 0; i--) {
+        const h = hazardList[i];
+        h.z += stepWorld;
+        h.rig.root.position.z = h.z;
+
+        if (!h.hit) {
+          const latDist = Math.abs(currentX - LANE_CENTERS[h.lane]);
+          const zDist = Math.abs(h.z);
+          if (latDist < 1.08 && zDist < 1.65) {
+            h.hit = true;
+            if (now > invulnUntil) {
+              hpRef.current -= 1;
+              invulnUntil = now + 1150;
+              cameraTrauma = 1.0;
+              setHp(hpRef.current);
+              triggerCallout(
+                h.kind === 'oil' ? 'МАСЛЯНАЯ ЛУЖА! -1 БРОНЯ' : 'ДОРОЖНЫЕ ШИПЫ! -1 БРОНЯ',
+                'rose',
+                1100
+              );
+              soundFX.playMiniTrap();
+              if (hpRef.current <= 0) {
+                setDistance(Math.round(distanceRef.current));
+                cleanupEntityLists();
+                renderer.render(scene, camera);
+                void finishRaceRef.current(false);
+                return;
+              }
+            }
+          }
+        }
+
+        if (h.z > 12) {
+          scene.remove(h.rig.root);
+          h.rig.dispose();
+          hazardList.splice(i, 1);
         }
       }
 
@@ -804,7 +946,7 @@ export const TenetRaceGame: React.FC<TenetRaceGameProps> = ({
       envTarget.dispose();
       renderer.dispose();
     };
-  }, [phase, triggerNearMissBanner]);
+  }, [phase, triggerCallout]);
 
   const estimatedPreview = Math.min(
     600,
@@ -869,10 +1011,10 @@ export const TenetRaceGame: React.FC<TenetRaceGameProps> = ({
           <div className="space-y-1.5">
             <h3 className="font-display text-lg font-extrabold text-white">TENET T4 · Traffic Rider 3D</h3>
             <p className="text-xs text-slate-400 max-w-md mx-auto leading-relaxed">
-              Несись по 4-полосной ночной магистрали за рулём <span className="text-white font-semibold">3D TENET T4</span>! Жми <span className="text-cyan-300 font-semibold">Газ/Нитро</span>, тормози перед потоком, делай плотные <span className="text-[#FACC15] font-semibold">обгоны (+15 TC)</span> и собирай монеты (<span className="text-[#FACC15] font-semibold">+20 TC</span>). До <span className="font-mono-num text-white">600 TC</span> за заезд.
+              Несись по 4-полосной ночной магистрали за рулём <span className="text-white font-semibold">3D TENET T4</span>! Машина сама набирает ход каждые 5 секунд — объезжай поток, <span className="text-amber-300 font-semibold">масляные лужи и шипы</span>, делай плотные <span className="text-cyan-300 font-semibold">обгоны (+15 TC)</span> и собирай монеты (<span className="text-[#FACC15] font-semibold">+20 TC</span>). До <span className="font-mono-num text-white">600 TC</span> за заезд.
             </p>
             <p className="text-[11px] font-mono-num text-slate-500">
-              A/D или ←/→ — полосы · W/↑ — Газ · S/↓ — Тормоз
+              A/D или ←/→ — полосы · S/↓ — притормозить
             </p>
           </div>
           <button
@@ -916,57 +1058,49 @@ export const TenetRaceGame: React.FC<TenetRaceGameProps> = ({
           >
             <div ref={canvasMountRef} data-testid="tenet-race-canvas" className="w-full h-full" />
 
-            {/* Top-left Digital Speedometer */}
+            {/* Top-left Digital Speedometer + Current Escalation Stage */}
             <div className="pointer-events-none absolute top-3 left-3 rounded-lg border border-white/10 bg-[#0B0D10]/85 px-3 py-1.5">
-              <div className="font-mono-num text-xl sm:text-2xl font-black leading-none text-white">
-                {speedKmh} <span className="text-[11px] font-bold text-[#FACC15]">КМ/Ч</span>
+              <div className="flex items-baseline gap-2">
+                <span className="font-mono-num text-xl sm:text-2xl font-black leading-none text-white">
+                  {speedKmh} <span className="text-[11px] font-bold text-[#FACC15]">КМ/Ч</span>
+                </span>
+                <span className="text-[10px] font-mono-num font-bold text-cyan-300">
+                  x{speedStage}
+                </span>
               </div>
               <div className="text-[10px] font-mono-num text-slate-400 mt-0.5">
                 {distance} м · ~{estimatedPreview} TC
               </div>
             </div>
 
-            {/* Top-right Near-Miss Callout */}
-            {nearMissBanner && (
-              <div className="pointer-events-none absolute top-3 right-3 rounded-lg border border-cyan-300/45 bg-cyan-950/90 px-3 py-1.5 font-display text-xs font-extrabold text-cyan-200 shadow-lg">
+            {/* Top-right Near-Miss / Speed Stage / Hazard Callout */}
+            {calloutBanner && (
+              <div
+                className={`pointer-events-none absolute top-3 right-3 rounded-lg border px-3 py-1.5 font-display text-xs font-extrabold shadow-lg ${
+                  calloutBanner.tone === 'rose'
+                    ? 'border-rose-400/55 bg-rose-950/90 text-rose-200'
+                    : calloutBanner.tone === 'amber'
+                    ? 'border-amber-400/55 bg-amber-950/90 text-amber-200'
+                    : 'border-cyan-300/45 bg-cyan-950/90 text-cyan-200'
+                }`}
+              >
                 <Zap className="inline h-3.5 w-3.5 mr-1 text-[#FACC15]" />
-                {nearMissBanner}
+                {calloutBanner.text}
               </div>
             )}
           </div>
 
-          {/* Interactive Pedal & Lane Control Dock */}
-          <div className="grid grid-cols-4 gap-2">
+          {/* Interactive Lane & Brake Control Dock (Nitro removed; auto-accelerating highway) */}
+          <div className="grid grid-cols-3 gap-2">
             <button
               type="button"
               onClick={() => moveLane(-1)}
               style={{ touchAction: 'manipulation' }}
               aria-label="Перестроиться влево"
-              className="min-h-[48px] inline-flex items-center justify-center gap-1 rounded-xl border border-white/15 bg-[#181B22] hover:bg-[#222731] active:scale-95 text-xs sm:text-sm font-display font-bold text-white cursor-pointer"
+              className="min-h-[48px] inline-flex items-center justify-center gap-1.5 rounded-xl border border-white/15 bg-[#181B22] hover:bg-[#222731] active:scale-95 text-xs sm:text-sm font-display font-bold text-white cursor-pointer"
             >
               <ArrowLeft className="h-4 w-4" />
-              <span className="hidden sm:inline">Влево</span>
-            </button>
-
-            <button
-              type="button"
-              onPointerDown={() => {
-                gasHeldRef.current = true;
-              }}
-              onPointerUp={() => {
-                gasHeldRef.current = false;
-              }}
-              onPointerLeave={() => {
-                gasHeldRef.current = false;
-              }}
-              onPointerCancel={() => {
-                gasHeldRef.current = false;
-              }}
-              style={{ touchAction: 'manipulation' }}
-              className="min-h-[48px] inline-flex items-center justify-center gap-1.5 rounded-xl border border-cyan-400/40 bg-cyan-500/15 hover:bg-cyan-500/25 active:scale-95 text-xs sm:text-sm font-display font-bold text-cyan-200 cursor-pointer"
-            >
-              <Flame className="h-4 w-4 text-[#FACC15]" />
-              <span>ГАЗ</span>
+              <span>Влево</span>
             </button>
 
             <button
@@ -995,9 +1129,9 @@ export const TenetRaceGame: React.FC<TenetRaceGameProps> = ({
               onClick={() => moveLane(1)}
               style={{ touchAction: 'manipulation' }}
               aria-label="Перестроиться вправо"
-              className="min-h-[48px] inline-flex items-center justify-center gap-1 rounded-xl border border-white/15 bg-[#181B22] hover:bg-[#222731] active:scale-95 text-xs sm:text-sm font-display font-bold text-white cursor-pointer"
+              className="min-h-[48px] inline-flex items-center justify-center gap-1.5 rounded-xl border border-white/15 bg-[#181B22] hover:bg-[#222731] active:scale-95 text-xs sm:text-sm font-display font-bold text-white cursor-pointer"
             >
-              <span className="hidden sm:inline">Вправо</span>
+              <span>Вправо</span>
               <ArrowRight className="h-4 w-4" />
             </button>
           </div>

@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
 import { ArrowLeft, Car, Clock, Coins, Gamepad2, ShieldAlert, Sparkles, X } from 'lucide-react';
-import ptuTrapThumb from '../assets/images/ptu_trap_sprite_1794862141403.jpg';
 import tenetRiderCover from '../assets/images/tenet_rider_cover_1794862143521.jpg';
 import type { MinesBoardState, MinigameEnergySlot, MinigameId, MinigameStatusMap } from '../types';
 import { formatTC } from '../utils/economics';
@@ -59,14 +58,14 @@ const GAMES_CATALOG: {
     title: 'Минное поле ПТУ',
     meta: 'PvE-сапёр 4×4 · 3 ловушки · до 1 100 TC',
     description: 'Бесплатный вход: открывай сейфы с монетами и забирай банк в любой момент.',
-    imageUrl: ptuTrapThumb,
+    imageUrl: '/assets/aistudio/____________b9c27c9f.png',
     fallbackIcon: 'mines',
   },
   {
     id: 'race',
     title: 'Гонка на TENET T4',
     meta: '3D Traffic Rider · 4 полосы · до 600 TC',
-    description: 'Управляй 3D TENET T4: жми Газ/Нитро, тормози перед потоком, делай плотные обгоны (+15 TC)!',
+    description: 'Скорость 3D TENET T4 постоянно растёт! Объезжай поток, шипы и масляные лужи, делай плотные обгоны (+15 TC)!',
     imageUrl: tenetRiderCover,
     fallbackIcon: 'race',
   },
@@ -197,14 +196,14 @@ export const EarnGamesModal: React.FC<EarnGamesModalProps> = ({
                     className="flex flex-col sm:flex-row sm:items-center justify-between gap-3.5 rounded-xl border border-white/[0.07] bg-[#0D0F12] p-3.5 hover:border-white/[0.14] transition-colors"
                   >
                     <div className="flex items-center gap-3.5 min-w-0">
-                      <div className="h-16 w-20 sm:h-16 sm:w-24 shrink-0 overflow-hidden rounded-xl border border-white/10 bg-[#181B22] flex items-center justify-center">
+                      <div className="h-16 w-24 sm:h-[72px] sm:w-[108px] shrink-0 overflow-hidden rounded-xl border border-white/10 bg-[#0B0D10] flex items-center justify-center">
                         {!brokenThumbs[game.id] ? (
                           <img
                             src={game.imageUrl}
                             alt={game.title}
                             referrerPolicy="no-referrer"
                             onError={() => setBrokenThumbs((prev) => ({ ...prev, [game.id]: true }))}
-                            className="h-full w-full object-cover"
+                            className="h-full w-full object-contain"
                           />
                         ) : game.fallbackIcon === 'mines' ? (
                           <ShieldAlert className="h-6 w-6 text-rose-400" />

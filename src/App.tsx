@@ -52,6 +52,7 @@ export default function App() {
   const [battleSyncKey, setBattleSyncKey] = useState(0);
   const handledInviteCode = useRef('');
   const noticeTimer = useRef<number | null>(null);
+  const lastNoticeTabRef = useRef<AppTab>('battles');
   const activeTabRef = useRef(activeTab);
   const prevUnlockedAchievementsRef = useRef<{ userId: string | null; ids: Set<string> }>({
     userId: null,
@@ -160,9 +161,17 @@ export default function App() {
     let stopped = false;
     let retryTimer = 0;
     let socket: WebSocket | null = null;
+    let hasConnectedBefore = false;
     const connect = () => {
       if (stopped) return;
       socket = new WebSocket(`${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`);
+      socket.onopen = () => {
+        if (hasConnectedBefore) {
+          void refreshPayload();
+          setBattleSyncKey((prev) => prev + 1);
+        }
+        hasConnectedBefore = true;
+      };
       socket.onmessage = (event) => {
         let message: { type?: string; username?: string; fromUsername?: string } = {};
         try { message = JSON.parse(event.data); } catch { return; }
@@ -179,16 +188,35 @@ export default function App() {
         if (message.type && message.type.startsWith('battle_')) {
           setBattleSyncKey((prev) => prev + 1);
         }
+        if (
+          message.type === 'friend_removed' ||
+          message.type === 'friend_request_declined' ||
+          message.type === 'battle_finished'
+        ) {
+          void refreshPayload();
+        }
         if (message.type && noticeTypes[message.type]) {
-          setRealtimeNotice(noticeTypes[message.type]);
-          setHasUnreadNotice(true);
-          if (noticeTimer.current !== null) window.clearTimeout(noticeTimer.current);
-          noticeTimer.current = window.setTimeout(() => setRealtimeNotice(null), 6500);
-          soundFX.playCoin();
-          if ('Notification' in window && Notification.permission === 'granted' && document.hidden) {
-            const notification = new Notification('Ферма', { body: noticeTypes[message.type].text, tag: message.type });
-            window.setTimeout(() => notification.close(), 6500);
-            notification.onclick = () => { window.focus(); navigateToTab(noticeTypes[message.type!].tab); setHasUnreadNotice(false); notification.close(); };
+          const nextNotice = noticeTypes[message.type];
+          const suppressInTabBanner =
+            (message.type === 'battle_started' || message.type === 'battle_invitation_accepted') &&
+            activeTabRef.current === 'battles';
+          if (!suppressInTabBanner) {
+            lastNoticeTabRef.current = nextNotice.tab;
+            setRealtimeNotice(nextNotice);
+            setHasUnreadNotice(true);
+            if (noticeTimer.current !== null) window.clearTimeout(noticeTimer.current);
+            noticeTimer.current = window.setTimeout(() => setRealtimeNotice(null), 6500);
+            soundFX.playCoin();
+            if ('Notification' in window && Notification.permission === 'granted' && document.hidden) {
+              const notification = new Notification('Ферма', { body: nextNotice.text, tag: message.type });
+              window.setTimeout(() => notification.close(), 6500);
+              notification.onclick = () => {
+                window.focus();
+                navigateToTab(nextNotice.tab);
+                setHasUnreadNotice(false);
+                notification.close();
+              };
+            }
           }
           void refreshPayload();
         }
@@ -198,7 +226,7 @@ export default function App() {
     connect();
     const poll = window.setInterval(() => { void refreshPayload(); }, 8000);
     return () => { stopped = true; window.clearTimeout(retryTimer); window.clearInterval(poll); socket?.close(); };
-  }, [isAuthorized, refreshPayload]);
+  }, [isAuthorized, refreshPayload, navigateToTab]);
 
   useEffect(() => {
     if (payload) setLiveDrops(payload.liveDrops);
@@ -226,6 +254,7 @@ export default function App() {
       const titles = newlyUnlocked
         .map((id) => ACHIEVEMENT_DEFINITIONS.find((def) => def.id === id)?.title ?? id)
         .join(', ');
+      lastNoticeTabRef.current = 'profile';
       setRealtimeNotice({
         text: `Новое достижение: «${titles}»! Заберите награду в профиле.`,
         tab: 'profile',
@@ -733,13 +762,6 @@ export default function App() {
       </main>
       </div>
 
-      <footer className="border-t border-white/[0.06] py-4 px-4 sm:px-6 text-xs text-slate-500">
-        <div className="max-w-[1320px] mx-auto flex flex-col sm:flex-row items-center justify-between gap-2">
-          <span>Ферма · Платформа карточек и кейсов на Т-коинах</span>
-          <span>Валюта Т-коин является вымышленной и не имеет реальной денежной ценности</span>
-        </div>
-      </footer>
-
       <EarnGamesModal
         isOpen={earnGamesOpen}
         onClose={() => setEarnGamesOpen(false)}
@@ -758,10 +780,10 @@ export default function App() {
 
       {realtimeNotice && <div role="status" className="fixed bottom-5 right-5 z-50 flex max-w-sm items-center gap-3 rounded-xl border border-amber-300/20 bg-[#171a20] p-4 shadow-2xl">
         <span className="flex-1 text-sm text-white">{realtimeNotice.text}</span>
-        <button type="button" onClick={() => { navigateToTab(realtimeNotice.tab); setRealtimeNotice(null); setHasUnreadNotice(false); }} className="whitespace-nowrap rounded-lg bg-amber-400 px-3 py-2 text-xs font-bold text-slate-950">Открыть</button>
-        <button type="button" onClick={() => setRealtimeNotice(null)} aria-label="Закрыть уведомление" className="text-slate-500">×</button>
+        <button type="button" onClick={() => { navigateToTab(realtimeNotice.tab); setRealtimeNotice(null); setHasUnreadNotice(false); }} className="whitespace-nowrap rounded-lg bg-amber-400 px-3 py-2 text-xs font-bold text-slate-950 cursor-pointer">Открыть</button>
+        <button type="button" onClick={() => setRealtimeNotice(null)} aria-label="Закрыть уведомление" className="text-slate-500 cursor-pointer">×</button>
       </div>}
-      {!realtimeNotice && hasUnreadNotice && <button type="button" onClick={() => setHasUnreadNotice(false)} title="Есть непрочитанное сообщение" aria-label="Есть непрочитанное сообщение" className="fixed bottom-5 right-5 z-50 h-4 w-4 rounded-full bg-amber-300 shadow-[0_0_12px_rgba(250,204,21,0.55)] cursor-pointer"><span className="sr-only">Новое сообщение</span></button>}
+      {!realtimeNotice && hasUnreadNotice && <button type="button" onClick={() => { navigateToTab(lastNoticeTabRef.current); setHasUnreadNotice(false); }} title="Открыть последнее уведомление" aria-label="Открыть последнее уведомление" className="fixed bottom-5 right-5 z-50 h-4 w-4 rounded-full bg-amber-300 shadow-[0_0_12px_rgba(250,204,21,0.55)] cursor-pointer"><span className="sr-only">Новое сообщение</span></button>}
 
       <TelegramLoginModal
         isOpen={telegramLoginOpen}

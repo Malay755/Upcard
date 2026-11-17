@@ -24,6 +24,14 @@ interface Props {
 const CONFETTI_COLORS = ['#FACC15', '#FB923C', '#E2E8F0', '#F59E0B', '#94A3B8'];
 
 export const BattleWinnerOverlay: React.FC<Props> = ({ winner, host, guest, isViewerWinner, isDraw, caseBattle, prizeValue, onClose }) => {
+  React.useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [onClose]);
+
   if (typeof document === 'undefined') return null;
   const confetti = Array.from({ length: 46 }, (_, index) => ({
     left: `${(index * 43 + 7) % 100}%`,
@@ -37,10 +45,10 @@ export const BattleWinnerOverlay: React.FC<Props> = ({ winner, host, guest, isVi
     ? <img src={player.avatarUrl} alt="" className={`${size} rounded-full border-2 border-amber-200/60 object-cover shadow-[0_0_35px_rgba(250,204,21,0.25)]`} />
     : <span className={`${size} inline-flex items-center justify-center rounded-full border-2 border-amber-200/50 text-lg font-black text-slate-950`} style={{ backgroundColor: player.avatarColor || '#FACC15' }}>{player.username.slice(0, 2).toUpperCase()}</span>;
 
-  return createPortal(<div className="winner-backdrop fixed inset-0 z-[70] flex items-center justify-center overflow-hidden bg-black/85 p-4 backdrop-blur-md" role="dialog" aria-modal="true" aria-label={isDraw ? 'Ничья в батле' : `Победитель батла: ${winner?.username}`}>
+  return createPortal(<div data-testid="battle-winner-overlay" className="winner-backdrop fixed inset-0 z-[70] flex items-center justify-center overflow-hidden bg-black/85 p-4 backdrop-blur-md" role="dialog" aria-modal="true" aria-label={isDraw ? 'Ничья в батле' : `Победитель батла: ${winner?.username}`}>
     <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true">{confetti.map((piece, index) => <i key={index} className="winner-confetti-piece" style={{ left: piece.left, backgroundColor: piece.color, '--confetti-delay': piece.delay, '--confetti-time': piece.duration, '--confetti-drift': piece.drift, '--confetti-turn': piece.turn } as React.CSSProperties}/>)}</div>
     <div className="winner-panel relative z-10 w-full max-w-xl rounded-3xl border border-amber-200/25 bg-[radial-gradient(ellipse_at_top,rgba(250,204,21,0.12),transparent_55%),#121419] p-6 text-center shadow-[0_30px_100px_rgba(0,0,0,0.75)] sm:p-9">
-      <button type="button" onClick={onClose} aria-label="Закрыть" className="absolute right-4 top-4 rounded-full border border-white/10 bg-white/[0.04] p-2 text-slate-400 hover:text-white"><X className="h-4 w-4"/></button>
+      <button type="button" onClick={onClose} aria-label="Закрыть" className="absolute right-4 top-4 rounded-full border border-white/10 bg-white/[0.04] p-2 text-slate-400 hover:text-white cursor-pointer"><X className="h-4 w-4"/></button>
       <div className="mx-auto mb-4 inline-flex items-center gap-2 rounded-full border border-amber-300/25 bg-amber-300/[0.08] px-4 py-2 text-xs font-black tracking-[0.2em] text-amber-200"><Trophy className="h-4 w-4"/>{isDraw ? 'НИЧЬЯ' : 'БАТТЛ ЗАВЕРШЁН'}</div>
       {isDraw ? <>
         <h2 className="text-3xl font-black text-white sm:text-4xl">Равный результат</h2>
