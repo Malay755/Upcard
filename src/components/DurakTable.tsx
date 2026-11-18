@@ -65,9 +65,43 @@ export const DurakTable: React.FC<DurakTableProps> = ({
   const [freshHandIds, setFreshHandIds] = useState<Set<string>>(() => new Set());
   const [freshTableIds, setFreshTableIds] = useState<Set<string>>(() => new Set());
 
+  interface DragCardState {
+    card: DurakCardType;
+    pointerId: number;
+    startX: number;
+    startY: number;
+    lastX: number;
+    clientX: number;
+    clientY: number;
+    offsetX: number;
+    offsetY: number;
+    width: number;
+    height: number;
+    tiltDeg: number;
+    active: boolean;
+    hoverZone: 'none' | 'table' | 'pair';
+    hoverPairIndex: number | null;
+  }
+
+  interface ReturnCardState {
+    card: DurakCardType;
+    x: number;
+    y: number;
+    toX: number;
+    toY: number;
+    moved: boolean;
+  }
+
+  const [dragState, setDragState] = useState<DragCardState | null>(null);
+  const [returnAnim, setReturnAnim] = useState<ReturnCardState | null>(null);
+
   const prevDeckRef = useRef<{ roomId: string; status: string; deckCount: number; discardCount: number } | null>(null);
   const prevHandIdsRef = useRef<Set<string>>(new Set());
   const prevTableCardIdsRef = useRef<Set<string>>(new Set());
+  const tableDropRef = useRef<HTMLDivElement | null>(null);
+  const pairSlotRefs = useRef<Map<number, HTMLDivElement>>(new Map());
+  const handSlotRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const suppressClickCardIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     setSelectedCardId(null);
@@ -245,6 +279,10 @@ export const DurakTable: React.FC<DurakTableProps> = ({
     uncoveredPairs.length > 0;
 
   const handleHandCardClick = async (card: DurakCardType) => {
+    if (suppressClickCardIdRef.current === card.id) {
+      suppressClickCardIdRef.current = null;
+      return;
+    }
     if (busyAction || room.status !== 'playing' || isMyFinished) return;
 
     if (!isDefender) {
@@ -277,6 +315,237 @@ export const DurakTable: React.FC<DurakTableProps> = ({
   const handleTableSlotClick = async (pairIndex: number) => {
     if (busyAction || !selectedCard || !selectedBeatablePairIndices.has(pairIndex)) return;
     await onAction({ type: 'defend', cardId: selectedCard.id, pairIndex });
+  };
+
+  const dragHandlersRef = useRef({
+    canCardAttack,
+    canCardDefendAny,
+    canCardTransfer,
+    isCardPlayable,
+    uncoveredPairs,
+    isDefender,
+    phase: room.phase,
+    trumpSuit: room.trumpSuit,
+    onAction,
+  });
+  dragHandlersRef.current = {
+    canCardAttack,
+    canCardDefendAny,
+    canCardTransfer,
+    isCardPlayable,
+    uncoveredPairs,
+    isDefender,
+    phase: room.phase,
+    trumpSuit: room.trumpSuit,
+    onAction,
+  };
+
+  useEffect(() => {
+    if (room.status !== 'playing' || isMyFinished) {
+      setDragState(null);
+      setReturnAnim(null);
+    }
+  }, [room.status, isMyFinished]);
+
+  useEffect(() => {
+    if (!dragState) return;
+    const pointerId = dragState.pointerId;
+
+    const evaluateDropTarget = (
+      clientX: number,
+      clientY: number,
+      card: DurakCardType
+    ): { hoverZone: 'none' | 'table' | 'pair'; hoverPairIndex: number | null } => {
+      const {
+        canCardAttack: canAtk,
+        canCardDefendAny: canDefAny,
+        canCardTransfer: canTrans,
+        uncoveredPairs: openPairs,
+        isDefender: defending,
+        phase,
+        trumpSuit,
+      } = dragHandlersRef.current;
+
+      if (defending && phase === 'playing') {
+        for (const { pair, idx } of openPairs) {
+          if (!canBeatClient(pair.attack, card, trumpSuit)) continue;
+          const el = pairSlotRefs.current.get(idx);
+          if (!el) continue;
+          const r = el.getBoundingClientRect();
+          if (
+            clientX >= r.left - 14 &&
+            clientX <= r.right + 14 &&
+            clientY >= r.top - 14 &&
+            clientY <= r.bottom + 14
+          ) {
+            return { hoverZone: 'pair', hoverPairIndex: idx };
+          }
+        }
+      }
+
+      const tableEl = tableDropRef.current;
+      if (tableEl) {
+        const tr = tableEl.getBoundingClientRect();
+        const insideTable =
+          clientX >= tr.left - 12 &&
+          clientX <= tr.right + 12 &&
+          clientY >= tr.top - 12 &&
+          clientY <= tr.bottom + 12;
+        if (insideTable && (canAtk(card) || canTrans(card) || canDefAny(card))) {
+          return { hoverZone: 'table', hoverPairIndex: null };
+        }
+      }
+
+      return { hoverZone: 'none', hoverPairIndex: null };
+    };
+
+    const handleMove = (ev: PointerEvent) => {
+      if (ev.pointerId !== pointerId) return;
+      setDragState((prev) => {
+        if (!prev || prev.pointerId !== pointerId) return prev;
+        const dist = Math.hypot(ev.clientX - prev.startX, ev.clientY - prev.startY);
+        const nowActive = prev.active || dist > 6;
+        if (nowActive) {
+          suppressClickCardIdRef.current = prev.card.id;
+        }
+        const dxStep = ev.clientX - prev.lastX;
+        const rawTilt = Math.max(-16, Math.min(16, dxStep * 0.85));
+        const nextTilt = prev.tiltDeg * 0.65 + rawTilt * 0.35;
+        const drop = nowActive
+          ? evaluateDropTarget(ev.clientX, ev.clientY, prev.card)
+          : { hoverZone: 'none' as const, hoverPairIndex: null };
+
+        return {
+          ...prev,
+          lastX: ev.clientX,
+          clientX: ev.clientX,
+          clientY: ev.clientY,
+          tiltDeg: nextTilt,
+          active: nowActive,
+          hoverZone: drop.hoverZone,
+          hoverPairIndex: drop.hoverPairIndex,
+        };
+      });
+    };
+
+    const finishDrag = (ev: PointerEvent, canceled: boolean) => {
+      if (ev.pointerId !== pointerId) return;
+      setDragState((prev) => {
+        if (!prev || prev.pointerId !== pointerId) return null;
+        if (!prev.active) return null;
+
+        window.setTimeout(() => {
+          if (suppressClickCardIdRef.current === prev.card.id) {
+            suppressClickCardIdRef.current = null;
+          }
+        }, 90);
+
+        if (!canceled) {
+          const drop = evaluateDropTarget(ev.clientX, ev.clientY, prev.card);
+          const {
+            canCardAttack: canAtk,
+            canCardDefendAny: canDefAny,
+            canCardTransfer: canTrans,
+            uncoveredPairs: openPairs,
+            isDefender: defending,
+            trumpSuit,
+            onAction: runMove,
+          } = dragHandlersRef.current;
+
+          if (drop.hoverZone === 'pair' && drop.hoverPairIndex !== null) {
+            void runMove({ type: 'defend', cardId: prev.card.id, pairIndex: drop.hoverPairIndex });
+            return null;
+          }
+
+          if (drop.hoverZone === 'table') {
+            if (!defending && canAtk(prev.card)) {
+              void runMove({ type: 'attack', cardId: prev.card.id });
+              return null;
+            }
+            if (defending && canTrans(prev.card)) {
+              void runMove({ type: 'transfer', cardId: prev.card.id });
+              return null;
+            }
+            if (defending && canDefAny(prev.card)) {
+              const beatable = openPairs.filter(({ pair }) =>
+                canBeatClient(pair.attack, prev.card, trumpSuit)
+              );
+              if (beatable.length === 1) {
+                void runMove({ type: 'defend', cardId: prev.card.id, pairIndex: beatable[0].idx });
+                return null;
+              }
+              setSelectedCardId(prev.card.id);
+              return null;
+            }
+          }
+        }
+
+        // Spring back smoothly to its hand slot
+        const slotEl = handSlotRefs.current.get(prev.card.id);
+        const slotRect = slotEl?.getBoundingClientRect();
+        const fromX = ev.clientX - prev.offsetX;
+        const fromY = ev.clientY - prev.offsetY;
+        const toX = slotRect ? slotRect.left : prev.startX - prev.offsetX;
+        const toY = slotRect ? slotRect.top : prev.startY - prev.offsetY;
+        setReturnAnim({
+          card: prev.card,
+          x: fromX,
+          y: fromY,
+          toX,
+          toY,
+          moved: false,
+        });
+        return null;
+      });
+    };
+
+    const handleUp = (ev: PointerEvent) => finishDrag(ev, false);
+    const handleCancel = (ev: PointerEvent) => finishDrag(ev, true);
+
+    window.addEventListener('pointermove', handleMove);
+    window.addEventListener('pointerup', handleUp);
+    window.addEventListener('pointercancel', handleCancel);
+    return () => {
+      window.removeEventListener('pointermove', handleMove);
+      window.removeEventListener('pointerup', handleUp);
+      window.removeEventListener('pointercancel', handleCancel);
+    };
+  }, [dragState?.pointerId]);
+
+  useEffect(() => {
+    if (!returnAnim) return;
+    if (!returnAnim.moved) {
+      const raf = window.requestAnimationFrame(() => {
+        setReturnAnim((prev) => (prev ? { ...prev, moved: true } : null));
+      });
+      return () => window.cancelAnimationFrame(raf);
+    }
+    const timer = window.setTimeout(() => setReturnAnim(null), 230);
+    return () => window.clearTimeout(timer);
+  }, [returnAnim]);
+
+  const startCardDrag = (e: React.PointerEvent<HTMLDivElement>, card: DurakCardType) => {
+    if (busyAction || room.status !== 'playing' || isMyFinished) return;
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    setReturnAnim(null);
+    setDragState({
+      card,
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      lastX: e.clientX,
+      clientX: e.clientX,
+      clientY: e.clientY,
+      offsetX: e.clientX - rect.left,
+      offsetY: e.clientY - rect.top,
+      width: rect.width,
+      height: rect.height,
+      tiltDeg: 0,
+      active: false,
+      hoverZone: 'none',
+      hoverPairIndex: null,
+    });
   };
 
   // Waiting room before cards are dealt
@@ -611,24 +880,68 @@ export const DurakTable: React.FC<DurakTableProps> = ({
 
         {/* Center Zone: Card Bouts + Right Deck & Trump Stack */}
         <div className="grid items-center gap-4 lg:grid-cols-[minmax(0,1fr)_170px]">
-          {/* Active Table Pairs */}
-          <div className="flex min-h-[168px] flex-wrap items-center justify-center gap-3 sm:gap-5 rounded-2xl border border-white/[0.09] bg-black/20 px-4 py-5">
+          {/* Active Table Pairs (also acts as Drag-and-Drop target felt) */}
+          <div
+            ref={tableDropRef}
+            data-testid="durak-table-dropzone"
+            className={`relative flex min-h-[168px] flex-wrap items-center justify-center gap-3 sm:gap-5 rounded-2xl border px-4 py-5 transition-colors duration-150 ${
+              dragState?.active && dragState.hoverZone !== 'none'
+                ? 'border-[#FACC15]/80 bg-emerald-900/35 durak-drop-glow'
+                : dragState?.active && isCardPlayable(dragState.card)
+                ? 'border-dashed border-amber-300/45 bg-black/25'
+                : 'border-white/[0.09] bg-black/20'
+            }`}
+          >
+            {dragState?.active && isCardPlayable(dragState.card) && (
+              <div className="pointer-events-none absolute inset-x-0 top-2 z-10 text-center">
+                <span className="inline-block rounded bg-black/80 px-2.5 py-0.5 text-[11px] font-bold text-[#FACC15] shadow">
+                  {dragState.hoverZone === 'pair'
+                    ? 'Отпустите, чтобы отбить'
+                    : !isDefender && canCardAttack(dragState.card)
+                    ? 'Отпустите карту на стол — ход'
+                    : isDefender && canCardTransfer(dragState.card)
+                    ? 'Отпустите карту на стол — перевести'
+                    : 'Перетащите на открытую карту для отбоя'}
+                </span>
+              </div>
+            )}
             {room.table.length === 0 ? (
-              <div className="text-center text-sm text-emerald-100/65">
+              <div
+                className={`text-center text-sm text-emerald-100/65 transition-opacity duration-150 ${
+                  dragState?.active ? 'opacity-0' : 'opacity-100'
+                }`}
+              >
                 {room.status === 'playing'
-                  ? 'Стол пуст — ждём первую карту атаки'
+                  ? 'Стол пуст — перетащите или нажмите карту для атаки'
                   : 'Партия завершена'}
               </div>
             ) : (
               room.table.map((pair, idx) => {
-                const isTarget = selectedBeatablePairIndices.has(idx);
+                const isSelectedTarget = selectedBeatablePairIndices.has(idx);
+                const isDragPlayableTarget =
+                  Boolean(dragState?.active) &&
+                  isDefender &&
+                  room.phase === 'playing' &&
+                  pair.defense === null &&
+                  canBeatClient(pair.attack, dragState!.card, room.trumpSuit);
+                const isDragHoveredTarget = dragState?.active && dragState.hoverPairIndex === idx;
+                const isTarget = isSelectedTarget || isDragPlayableTarget;
                 const attackFresh = freshTableIds.has(pair.attack.id);
                 const defenseFresh = pair.defense ? freshTableIds.has(pair.defense.id) : false;
                 return (
                   <div
                     key={`${pair.attack.id}_${idx}`}
+                    data-durak-pair-index={idx}
+                    ref={(el) => {
+                      if (el) pairSlotRefs.current.set(idx, el);
+                      else pairSlotRefs.current.delete(idx);
+                    }}
                     className={`relative flex items-start transition-transform ${
-                      isTarget ? 'scale-105' : ''
+                      isDragHoveredTarget
+                        ? 'scale-110'
+                        : isTarget
+                        ? 'scale-105'
+                        : ''
                     } ${attackFresh ? 'durak-table-card-in' : ''}`}
                   >
                     {isTarget ? (
@@ -636,11 +949,15 @@ export const DurakTable: React.FC<DurakTableProps> = ({
                         type="button"
                         onClick={() => void handleTableSlotClick(idx)}
                         aria-label={`Отбить карту ${formatDurakCardShort(pair.attack)}`}
-                        className="relative cursor-pointer rounded-xl ring-3 ring-[#FACC15] shadow-[0_0_24px_rgba(250,204,21,0.55)]"
+                        className={`relative cursor-pointer rounded-xl ring-3 ring-[#FACC15] ${
+                          isDragHoveredTarget
+                            ? 'shadow-[0_0_32px_rgba(250,204,21,0.85)]'
+                            : 'shadow-[0_0_24px_rgba(250,204,21,0.55)]'
+                        }`}
                       >
                         <DurakCard card={pair.attack} size="md" />
                         <span className="absolute -bottom-2.5 left-1/2 -translate-x-1/2 whitespace-nowrap rounded bg-[#FACC15] px-1.5 py-0.5 text-[10px] font-black text-[#0B0D10]">
-                          Отбить
+                          {isDragHoveredTarget ? 'Отпустить!' : 'Отбить'}
                         </span>
                       </button>
                     ) : (
@@ -862,7 +1179,7 @@ export const DurakTable: React.FC<DurakTableProps> = ({
             </div>
           </div>
 
-          {/* Player's Hand of White Photo Cards */}
+          {/* Player's Hand of White Photo Cards (clickable + draggable onto the table) */}
           {myPlayer && (
             <div
               data-testid="durak-my-hand"
@@ -877,20 +1194,36 @@ export const DurakTable: React.FC<DurakTableProps> = ({
                   {room.myHand.map((card, idx) => {
                     const playable = isCardPlayable(card);
                     const isFresh = freshHandIds.has(card.id);
+                    const isBeingDragged = dragState?.active && dragState.card.id === card.id;
+                    const isReturning = returnAnim?.card.id === card.id;
                     return (
                       <div
                         key={card.id}
+                        ref={(el) => {
+                          if (el) handSlotRefs.current.set(card.id, el);
+                          else handSlotRefs.current.delete(card.id);
+                        }}
+                        onPointerDown={(e) => startCardDrag(e, card)}
                         style={isFresh ? ({ '--deal-delay': `${idx * 45}ms` } as React.CSSProperties) : undefined}
-                        className={`shrink-0 ${isFresh ? 'durak-hand-card-in' : ''}`}
+                        className={`relative shrink-0 ${
+                          room.status === 'playing' && !isMyFinished ? 'touch-none cursor-grab active:cursor-grabbing' : ''
+                        } ${isFresh ? 'durak-hand-card-in' : ''}`}
                       >
-                        <DurakCard
-                          card={card}
-                          size="md"
-                          selected={selectedCardId === card.id}
-                          playable={playable}
-                          disabled={room.status !== 'playing' || !playable}
-                          onClick={() => void handleHandCardClick(card)}
-                        />
+                        {isBeingDragged || isReturning ? (
+                          <div
+                            aria-hidden="true"
+                            className="w-[86px] h-[115px] sm:w-[98px] sm:h-[131px] rounded-xl border-2 border-dashed border-amber-300/40 bg-black/25"
+                          />
+                        ) : (
+                          <DurakCard
+                            card={card}
+                            size="md"
+                            selected={selectedCardId === card.id}
+                            playable={playable}
+                            disabled={room.status !== 'playing' || !playable}
+                            onClick={() => void handleHandCardClick(card)}
+                          />
+                        )}
                       </div>
                     );
                   })}
@@ -900,6 +1233,46 @@ export const DurakTable: React.FC<DurakTableProps> = ({
           )}
         </div>
       </div>
+
+      {/* Floating Dragged Card following cursor / finger across the screen */}
+      {dragState?.active && (
+        <div
+          data-testid="durak-drag-overlay"
+          aria-hidden="true"
+          style={{
+            transform: `translate3d(${dragState.clientX - dragState.offsetX}px, ${
+              dragState.clientY - dragState.offsetY
+            }px, 0) rotate(${dragState.tiltDeg.toFixed(2)}deg) scale(1.08)`,
+          }}
+          className="pointer-events-none fixed left-0 top-0 z-50 will-change-transform drop-shadow-[0_24px_45px_rgba(0,0,0,0.68)]"
+        >
+          <DurakCard
+            card={dragState.card}
+            size="md"
+            playable={dragState.hoverZone !== 'none'}
+            className={
+              dragState.hoverZone !== 'none'
+                ? 'ring-3 ring-[#FACC15] shadow-[0_0_28px_rgba(250,204,21,0.55)]'
+                : ''
+            }
+          />
+        </div>
+      )}
+
+      {/* Smooth Spring-Back Card Return when dropped outside valid zone */}
+      {returnAnim && (
+        <div
+          aria-hidden="true"
+          style={{
+            transform: `translate3d(${returnAnim.moved ? returnAnim.toX : returnAnim.x}px, ${
+              returnAnim.moved ? returnAnim.toY : returnAnim.y
+            }px, 0) scale(${returnAnim.moved ? 1 : 1.04})`,
+          }}
+          className="durak-drag-return pointer-events-none fixed left-0 top-0 z-50 will-change-transform drop-shadow-2xl"
+        >
+          <DurakCard card={returnAnim.card} size="md" />
+        </div>
+      )}
 
       {/* Completed Match Result Overlay */}
       {room.status === 'completed' && (

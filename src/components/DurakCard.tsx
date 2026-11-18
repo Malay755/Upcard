@@ -60,7 +60,7 @@ export const DurakCard: React.FC<DurakCardProps> = ({
   const cardInner = (
     <div
       style={style}
-      className={`relative select-none overflow-hidden bg-white border border-slate-200 transition-transform duration-150 ${SIZE_CLASSES[size]} ${
+      className={`relative select-none overflow-hidden bg-white border border-slate-200/95 ring-1 ring-inset ring-black/[0.04] transition-transform duration-150 ${SIZE_CLASSES[size]} ${
         rotated ? 'rotate-90' : ''
       } ${interactiveClasses} ${className}`}
     >
@@ -131,22 +131,25 @@ export const DurakCardBack: React.FC<{
   return (
     <div
       aria-hidden="true"
-      className={`${sizeMap} ${className} relative overflow-hidden border border-amber-300/40 bg-gradient-to-br from-[#164E3B] via-[#0B2D22] to-[#081F17] shadow-md`}
+      className={`${sizeMap} ${className} relative overflow-hidden border border-amber-300/45 bg-gradient-to-br from-[#164E3B] via-[#0B2D22] to-[#081F17] shadow-md`}
     >
       <div
-        className="absolute inset-1 rounded border border-amber-300/30"
+        className="absolute inset-1 rounded border border-amber-300/35"
         style={{
           backgroundImage:
-            'repeating-linear-gradient(45deg, rgba(250,204,21,0.09) 0px, rgba(250,204,21,0.09) 4px, transparent 4px, transparent 8px)',
+            'repeating-linear-gradient(45deg, rgba(250,204,21,0.1) 0px, rgba(250,204,21,0.1) 4px, transparent 4px, transparent 8px)',
         }}
       />
+      <div className="absolute inset-2 rounded-[3px] border border-amber-200/15 pointer-events-none" />
       {shimmer && (
         <div
-          className="durak-deck-sheen pointer-events-none absolute -inset-y-4 -left-1/2 w-1/2 bg-gradient-to-r from-transparent via-amber-200/30 to-transparent"
+          className="durak-deck-sheen pointer-events-none absolute -inset-y-4 -left-1/2 w-1/2 bg-gradient-to-r from-transparent via-amber-200/35 to-transparent"
         />
       )}
-      <div className="absolute inset-0 flex items-center justify-center text-[10px] font-display font-black text-amber-300/65">
-        Ф
+      <div className="absolute inset-0 flex items-center justify-center">
+        <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-amber-300/35 bg-[#081F17]/80 text-[10px] font-display font-black text-amber-300/80 shadow-inner">
+          Ф
+        </span>
       </div>
     </div>
   );
